@@ -222,6 +222,145 @@ class TestPythonInstaller(unittest.TestCase):
         result = self.installer._run_pip_install(venv_path)
         self.assertFalse(result)
 
+    @patch('subprocess.run')
+    def test_configure_pip_install_fails(self, mock_run):
+        """Test configure when pip installation fails."""
+        with patch.object(self.installer, 'is_pip_installed', return_value=False):
+            mock_run.side_effect = Exception("Failed to install pip")
+            result = self.installer.configure()
+            self.assertFalse(result)
+
+    def test_configure_with_proxy(self):
+        """Test configure when proxy is set."""
+        self.proxy_manager.http_proxy = 'http://proxy:8080'
+
+        with patch.object(self.installer, 'is_pip_installed', return_value=True):
+            with patch.object(self.installer, '_ensure_pip_directories'):
+                with patch.object(self.installer, '_configure_pip_proxy') as mock_proxy:
+                    with patch.object(self.installer, 'run_command', return_value=(True, '')):
+                        result = self.installer.configure()
+                        self.assertTrue(result)
+                        mock_proxy.assert_called_once()
+
+    def test_configure_venv_creation_fails(self):
+        """Test configure when venv creation fails."""
+        with patch.object(self.installer, 'is_pip_installed', return_value=True):
+            with patch.object(self.installer, '_ensure_pip_directories'):
+                with patch.object(self.installer, 'run_command', return_value=(False, 'venv creation failed')):
+                    result = self.installer.configure()
+                    self.assertFalse(result)
+
+    def test_configure_pip_install_fails_but_continues(self):
+        """Test configure when pip install fails but continues."""
+        # Create requirements.txt
+        requirements_file = self.temp_dir / 'requirements.txt'
+        requirements_file.write_text('requests==2.28.0', encoding='utf-8')
+
+        with patch.object(self.installer, 'is_pip_installed', return_value=True):
+            with patch.object(self.installer, '_ensure_pip_directories'):
+                with patch.object(self.installer, '_run_pip_install', return_value=False):
+                    with patch.object(self.installer, 'run_command', return_value=(True, '')):
+                        result = self.installer.configure()
+                        # Should return True even though pip install failed
+                        self.assertTrue(result)
+
+    @patch('subprocess.run')
+    def test_run_pip_install_with_setup_py(self, mock_run):
+        """Test running pip install with setup.py."""
+        # Create venv and setup.py
+        venv_path = self.temp_dir / 'venv'
+        venv_path.mkdir()
+        (venv_path / 'Scripts').mkdir()
+        pip_exe = venv_path / 'Scripts' / 'pip.exe'
+        pip_exe.write_text('', encoding='utf-8')
+
+        setup_file = self.temp_dir / 'setup.py'
+        setup_file.write_text('from setuptools import setup', encoding='utf-8')
+
+        mock_run.return_value = Mock(returncode=0, stderr='')
+        result = self.installer._run_pip_install(venv_path)
+        self.assertTrue(result)
+        # Verify pip install -e . was called
+        call_args = mock_run.call_args[0][0]
+        self.assertIn('-e', call_args)
+
+    @patch('subprocess.run')
+    def test_run_pip_install_with_pyproject_toml(self, mock_run):
+        """Test running pip install with pyproject.toml."""
+        # Create venv and pyproject.toml
+        venv_path = self.temp_dir / 'venv'
+        venv_path.mkdir()
+        (venv_path / 'Scripts').mkdir()
+        pip_exe = venv_path / 'Scripts' / 'pip.exe'
+        pip_exe.write_text('', encoding='utf-8')
+
+        pyproject_file = self.temp_dir / 'pyproject.toml'
+        pyproject_file.write_text('[tool.poetry]', encoding='utf-8')
+
+        mock_run.return_value = Mock(returncode=0, stderr='')
+        result = self.installer._run_pip_install(venv_path)
+        self.assertTrue(result)
+        # Verify pip install . was called
+        call_args = mock_run.call_args[0][0]
+        self.assertIn('install', call_args)
+
+    @patch('subprocess.run')
+    def test_run_pip_install_with_proxy(self, mock_run):
+        """Test running pip install with proxy configured."""
+        self.proxy_manager.http_proxy = 'http://proxy:8080'
+
+        # Create venv and requirements.txt
+        venv_path = self.temp_dir / 'venv'
+        venv_path.mkdir()
+        (venv_path / 'Scripts').mkdir()
+        pip_exe = venv_path / 'Scripts' / 'pip.exe'
+        pip_exe.write_text('', encoding='utf-8')
+
+        requirements_file = self.temp_dir / 'requirements.txt'
+        requirements_file.write_text('requests', encoding='utf-8')
+
+        mock_run.return_value = Mock(returncode=0, stderr='')
+        result = self.installer._run_pip_install(venv_path)
+        self.assertTrue(result)
+        # Verify --proxy was added to command
+        call_args = mock_run.call_args[0][0]
+        self.assertIn('--proxy', call_args)
+        self.assertIn('http://proxy:8080', call_args)
+
+    @patch('subprocess.run')
+    def test_run_pip_install_file_not_found(self, mock_run):
+        """Test running pip install when subprocess raises FileNotFoundError."""
+        # Create venv
+        venv_path = self.temp_dir / 'venv'
+        venv_path.mkdir()
+        (venv_path / 'Scripts').mkdir()
+        pip_exe = venv_path / 'Scripts' / 'pip.exe'
+        pip_exe.write_text('', encoding='utf-8')
+
+        requirements_file = self.temp_dir / 'requirements.txt'
+        requirements_file.write_text('requests', encoding='utf-8')
+
+        mock_run.side_effect = FileNotFoundError("pip not found")
+        result = self.installer._run_pip_install(venv_path)
+        self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_run_pip_install_generic_exception(self, mock_run):
+        """Test running pip install with generic exception."""
+        # Create venv
+        venv_path = self.temp_dir / 'venv'
+        venv_path.mkdir()
+        (venv_path / 'Scripts').mkdir()
+        pip_exe = venv_path / 'Scripts' / 'pip.exe'
+        pip_exe.write_text('', encoding='utf-8')
+
+        requirements_file = self.temp_dir / 'requirements.txt'
+        requirements_file.write_text('requests', encoding='utf-8')
+
+        mock_run.side_effect = Exception("Unknown error")
+        result = self.installer._run_pip_install(venv_path)
+        self.assertFalse(result)
+
 
 if __name__ == '__main__':
     unittest.main()
