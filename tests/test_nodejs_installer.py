@@ -173,6 +173,152 @@ class TestNodeJSInstaller(unittest.TestCase):
         result = self.installer._run_npm_install()
         self.assertFalse(result)
 
+    def test_detect_version_exception(self):
+        """Test detecting version when exception occurs parsing package.json."""
+        # Create invalid package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('invalid json{', encoding='utf-8')
+
+        version = self.installer.detect_version()
+        self.assertEqual(version, '20.11.0')  # Should return default
+
+    @patch('src.installers.nodejs_installer.zipfile.ZipFile')
+    @patch('pathlib.Path.unlink')
+    @patch('pathlib.Path.exists')
+    def test_install_with_download_and_extract(self, mock_exists, mock_unlink, mock_zipfile):
+        """Test Node.js installation with download and extraction."""
+        # Mock that nodejs_dir doesn't exist initially
+        def exists_side_effect(path_self):
+            # Return False for nodejs_dir check, True for others
+            if 'nodejs' in str(path_self):
+                return False
+            return True
+
+        mock_exists.side_effect = lambda: False
+
+        with patch.object(self.installer, 'is_installed', return_value=False):
+            with patch.object(self.installer, 'download_file', return_value=True):
+                with patch.object(self.installer.env_manager, 'set_system_path'):
+                    with patch.object(self.installer.env_manager, 'append_to_env'):
+                        # Mock the iterdir to return a directory that starts with 'node-v'
+                        mock_dir = Mock()
+                        mock_dir.is_dir.return_value = True
+                        mock_dir.name = 'node-v20.11.0-win-x64'
+                        mock_dir.rename = Mock()
+
+                        with patch('pathlib.Path.iterdir', return_value=[mock_dir]):
+                            mock_zip = Mock()
+                            mock_zipfile.return_value.__enter__.return_value = mock_zip
+
+                            result = self.installer.install()
+                            self.assertTrue(result)
+                            mock_zip.extractall.assert_called_once()
+
+    @patch('pathlib.Path.exists')
+    def test_install_download_fails(self, mock_exists):
+        """Test Node.js installation when download fails."""
+        mock_exists.return_value = False
+
+        with patch.object(self.installer, 'is_installed', return_value=False):
+            with patch.object(self.installer, 'download_file', return_value=False):
+                result = self.installer.install()
+                self.assertFalse(result)
+
+    @patch('src.installers.nodejs_installer.zipfile.ZipFile')
+    @patch('pathlib.Path.unlink')
+    @patch('pathlib.Path.exists')
+    def test_install_with_path_not_exists(self, mock_exists, mock_unlink, mock_zipfile):
+        """Test Node.js installation when PATH environment variable doesn't exist."""
+        import os
+
+        mock_exists.side_effect = lambda: False
+
+        # Save and remove PATH
+        original_path = os.environ.get('PATH', '')
+        had_path = 'PATH' in os.environ
+        if had_path:
+            del os.environ['PATH']
+
+        try:
+            with patch.object(self.installer, 'is_installed', return_value=False):
+                with patch.object(self.installer, 'download_file', return_value=True):
+                    with patch.object(self.installer.env_manager, 'set_system_path'):
+                        with patch.object(self.installer.env_manager, 'append_to_env'):
+                            # Mock the iterdir to return a directory that starts with 'node-v'
+                            mock_dir = Mock()
+                            mock_dir.is_dir.return_value = True
+                            mock_dir.name = 'node-v20.11.0-win-x64'
+                            mock_dir.rename = Mock()
+
+                            with patch('pathlib.Path.iterdir', return_value=[mock_dir]):
+                                mock_zip = Mock()
+                                mock_zipfile.return_value.__enter__.return_value = mock_zip
+
+                                result = self.installer.install()
+                                self.assertTrue(result)
+                                # Verify PATH was set
+                                self.assertIn('PATH', os.environ)
+        finally:
+            # Restore PATH
+            if had_path:
+                os.environ['PATH'] = original_path
+            elif 'PATH' in os.environ:
+                del os.environ['PATH']
+
+    def test_configure_with_proxy(self):
+        """Test configure when proxy is set."""
+        self.proxy_manager.http_proxy = 'http://proxy:8080'
+
+        with patch.object(self.installer, 'is_npm_installed', return_value=True):
+            with patch.object(self.installer, '_configure_npm_proxy') as mock_proxy:
+                with patch.object(self.installer, '_ensure_npm_config'):
+                    result = self.installer.configure()
+                    self.assertTrue(result)
+                    mock_proxy.assert_called_once()
+
+    def test_configure_npm_install_fails_but_continues(self):
+        """Test configure when npm install fails but continues."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        with patch.object(self.installer, 'is_npm_installed', return_value=True):
+            with patch.object(self.installer, '_run_npm_install', return_value=False):
+                with patch.object(self.installer, '_ensure_npm_config'):
+                    result = self.installer.configure()
+                    # Should return True even though npm install failed
+                    self.assertTrue(result)
+
+    @patch('subprocess.run')
+    def test_run_npm_install_generic_exception(self, mock_run):
+        """Test running npm install with generic exception."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        mock_run.side_effect = Exception("Unknown error")
+        result = self.installer._run_npm_install()
+        self.assertFalse(result)
+
+    def test_ensure_npm_config_already_exists(self):
+        """Test ensuring npm config when .npmrc already exists."""
+        npmrc_file = Path.home() / '.npmrc'
+
+        # Ensure .npmrc exists
+        if not npmrc_file.exists():
+            npmrc_file.write_text('[global]\n', encoding='utf-8')
+            cleanup_needed = True
+        else:
+            cleanup_needed = False
+
+        try:
+            # Should not raise error when file exists
+            self.installer._ensure_npm_config()
+            self.assertTrue(npmrc_file.exists())
+        finally:
+            if cleanup_needed and npmrc_file.exists():
+                npmrc_file.unlink()
+
 
 if __name__ == '__main__':
     unittest.main()
