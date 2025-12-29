@@ -185,6 +185,171 @@ class TestGitInstaller(unittest.TestCase):
         # Verify git config command was called
         mock_run.assert_called()
 
+    @patch('src.installers.git_installer.zipfile.ZipFile')
+    @patch('pathlib.Path.unlink')
+    @patch('pathlib.Path.exists')
+    def test_install_with_download_and_extract(self, mock_exists, mock_unlink, mock_zipfile):
+        """Test Git installation with download and extraction."""
+        # Mock that git_dir doesn't exist initially
+        mock_exists.return_value = False
+
+        with patch.object(self.installer, 'download_file', return_value=True):
+            with patch.object(self.installer, '_add_to_path'):
+                mock_zip = Mock()
+                mock_zipfile.return_value.__enter__.return_value = mock_zip
+
+                result = self.installer.install()
+                self.assertTrue(result)
+                mock_zip.extractall.assert_called_once()
+                mock_unlink.assert_called_once()
+
+    @patch('src.installers.git_installer.zipfile.ZipFile')
+    @patch('pathlib.Path.exists')
+    def test_install_extraction_fails(self, mock_exists, mock_zipfile):
+        """Test Git installation when extraction fails."""
+        mock_exists.return_value = False
+
+        with patch.object(self.installer, 'download_file', return_value=True):
+            mock_zipfile.side_effect = Exception("Extraction failed")
+
+            result = self.installer.install()
+            self.assertFalse(result)
+
+    def test_add_to_path_with_cmd_dir(self):
+        """Test adding Git to PATH when cmd directory exists."""
+        git_dir = self.temp_dir / 'git'
+        git_dir.mkdir()
+        (git_dir / 'cmd').mkdir()
+
+        with patch.object(self.installer.env_manager, 'set_system_path'):
+            with patch.object(self.installer.env_manager, 'append_to_env'):
+                self.installer._add_to_path(git_dir)
+
+    def test_add_to_path_with_bin_dir(self):
+        """Test adding Git to PATH when only bin directory exists."""
+        git_dir = self.temp_dir / 'git'
+        git_dir.mkdir()
+        (git_dir / 'bin').mkdir()
+
+        with patch.object(self.installer.env_manager, 'set_system_path'):
+            with patch.object(self.installer.env_manager, 'append_to_env'):
+                self.installer._add_to_path(git_dir)
+
+    @patch('subprocess.run')
+    def test_configure_git_with_ssl_disabled(self, mock_run):
+        """Test configuring Git with SSL verification disabled."""
+        mock_run.side_effect = [
+            Mock(returncode=1),  # name not configured
+            Mock(returncode=1),  # email not configured
+            Mock(returncode=0),  # set name
+            Mock(returncode=0),  # set email
+            Mock(returncode=0),  # set ssl
+        ]
+
+        result = self.installer.configure('John Doe', 'john@example.com', False)
+        self.assertTrue(result)
+
+    @patch('subprocess.run')
+    def test_configure_git_command_fails(self, mock_run):
+        """Test Git configuration when git command fails."""
+        mock_run.side_effect = [
+            Mock(returncode=1),  # name not configured
+            Mock(returncode=1),  # email not configured
+            subprocess.CalledProcessError(1, 'git'),  # command fails
+        ]
+
+        result = self.installer.configure('John Doe', 'john@example.com', True)
+        self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_detect_version_not_installed(self, mock_run):
+        """Test detecting version when Git not installed."""
+        mock_run.side_effect = FileNotFoundError()
+
+        version = self.installer.detect_version()
+        self.assertIsNone(version)
+
+    @patch('subprocess.run')
+    def test_detect_version_timeout(self, mock_run):
+        """Test detecting version with timeout."""
+        mock_run.side_effect = subprocess.TimeoutExpired('git', 5)
+
+        version = self.installer.detect_version()
+        self.assertIsNone(version)
+
+    @patch('subprocess.run')
+    def test_detect_version_generic_exception(self, mock_run):
+        """Test detecting version with generic exception."""
+        # First call for is_installed returns success, second call raises exception
+        mock_run.side_effect = [
+            Mock(returncode=0),  # is_installed check
+            Exception("Unknown error")  # get version fails
+        ]
+
+        version = self.installer.detect_version()
+        self.assertIsNone(version)
+
+    @patch('subprocess.run')
+    def test_configure_user_email_fails(self, mock_run):
+        """Test Git configuration when setting user email fails."""
+        mock_run.side_effect = [
+            Mock(returncode=1),  # name not configured
+            Mock(returncode=1),  # email not configured
+            Mock(returncode=0),  # set name succeeds
+            Exception("Failed to set email"),  # set email fails
+        ]
+
+        result = self.installer.configure('John Doe', 'john@example.com', True)
+        self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_configure_ssl_fails(self, mock_run):
+        """Test Git configuration when setting SSL fails."""
+        mock_run.side_effect = [
+            Mock(returncode=1),  # name not configured
+            Mock(returncode=1),  # email not configured
+            Mock(returncode=0),  # set name succeeds
+            Mock(returncode=0),  # set email succeeds
+            Exception("Failed to set SSL"),  # set SSL fails
+        ]
+
+        result = self.installer.configure('John Doe', 'john@example.com', True)
+        self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_is_git_configured_exception(self, mock_run):
+        """Test _is_git_configured when exception occurs."""
+        mock_run.side_effect = Exception("Command failed")
+
+        result = self.installer._is_git_configured()
+        self.assertFalse(result)
+
+    def test_add_to_path_when_path_not_exists(self):
+        """Test adding Git to PATH when PATH key doesn't exist."""
+        import os
+        git_dir = self.temp_dir / 'git'
+        git_dir.mkdir()
+        (git_dir / 'cmd').mkdir()
+
+        # Save original PATH and remove it from environment
+        original_path = os.environ.get('PATH', '')
+        had_path = 'PATH' in os.environ
+        if had_path:
+            del os.environ['PATH']
+
+        try:
+            with patch.object(self.installer.env_manager, 'set_system_path'):
+                with patch.object(self.installer.env_manager, 'append_to_env'):
+                    self.installer._add_to_path(git_dir)
+                    # Verify PATH was set (should be just the git path, no separator)
+                    self.assertEqual(os.environ['PATH'], str(git_dir / 'cmd'))
+        finally:
+            # Restore original PATH
+            if had_path:
+                os.environ['PATH'] = original_path
+            elif 'PATH' in os.environ:
+                del os.environ['PATH']
+
 
 if __name__ == '__main__':
     unittest.main()
