@@ -223,6 +223,132 @@ class TestCLIBasic(unittest.TestCase):
         installer = self.cli._get_installer(Technology.UNKNOWN, self.temp_dir)
         self.assertIsNone(installer)
 
+    @patch('click.confirm')
+    def test_process_repository_existing_overwrite_yes(self, mock_confirm):
+        """Test processing repository when existing and user confirms overwrite."""
+        mock_confirm.return_value = True  # User confirms overwrite
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            # Mock Path.exists to return True (repo exists)
+            with patch('pathlib.Path.exists', return_value=True):
+                with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                    with patch.object(self.cli.repo_manager, 'clone_repository', return_value=False):
+                        result = self.cli.process_repository('https://github.com/user/test_repo')
+                        self.assertFalse(result)
+
+    @patch('click.confirm')
+    def test_process_repository_existing_overwrite_no(self, mock_confirm):
+        """Test processing repository when existing and user declines overwrite."""
+        mock_confirm.return_value = False  # User declines overwrite
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            # Mock Path.exists to return True (repo exists)
+            with patch('pathlib.Path.exists', return_value=True):
+                result = self.cli.process_repository('https://github.com/user/test_repo')
+                self.assertFalse(result)
+
+    @patch('click.confirm')
+    def test_process_repository_existing_remove_fails(self, mock_confirm):
+        """Test processing repository when removal of existing repo fails."""
+        mock_confirm.return_value = True  # User confirms overwrite
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            # Mock Path.exists to return True (repo exists)
+            with patch('pathlib.Path.exists', return_value=True):
+                with patch.object(self.cli, 'safe_rmtree', return_value=False):
+                    result = self.cli.process_repository('https://github.com/user/test_repo')
+                    self.assertFalse(result)
+
+    def test_process_repository_unknown_technology(self):
+        """Test processing repository when technology cannot be detected."""
+        from src.detector import Technology
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                with patch.object(self.cli.repo_manager, 'clone_repository', return_value=True):
+                    with patch.object(self.cli.detector, 'detect', return_value=Technology.UNKNOWN):
+                        result = self.cli.process_repository('https://github.com/user/repo')
+                        self.assertFalse(result)
+
+    def test_process_repository_no_installer(self):
+        """Test processing repository when no installer is available."""
+        from src.detector import Technology
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                with patch.object(self.cli.repo_manager, 'clone_repository', return_value=True):
+                    with patch.object(self.cli.detector, 'detect', return_value=Technology.PYTHON):
+                        with patch.object(self.cli, '_get_installer', return_value=None):
+                            result = self.cli.process_repository('https://github.com/user/repo')
+                            self.assertFalse(result)
+
+    def test_process_repository_installation_fails(self):
+        """Test processing repository when technology installation fails."""
+        from src.detector import Technology
+
+        mock_installer = Mock()
+        mock_installer.is_installed.return_value = False
+        mock_installer.install.return_value = False
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                with patch.object(self.cli.repo_manager, 'clone_repository', return_value=True):
+                    with patch.object(self.cli.detector, 'detect', return_value=Technology.PYTHON):
+                        with patch.object(self.cli, '_get_installer', return_value=mock_installer):
+                            result = self.cli.process_repository('https://github.com/user/repo')
+                            self.assertFalse(result)
+
+    def test_process_repository_configuration_fails(self):
+        """Test processing repository when configuration fails."""
+        from src.detector import Technology
+
+        mock_installer = Mock()
+        mock_installer.is_installed.return_value = True
+        mock_installer.configure.return_value = False
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                with patch.object(self.cli.repo_manager, 'clone_repository', return_value=True):
+                    with patch.object(self.cli.detector, 'detect', return_value=Technology.PYTHON):
+                        with patch.object(self.cli, '_get_installer', return_value=mock_installer):
+                            result = self.cli.process_repository('https://github.com/user/repo')
+                            self.assertFalse(result)
+
+    def test_process_repository_success(self):
+        """Test successful repository processing."""
+        from src.detector import Technology
+
+        mock_installer = Mock()
+        mock_installer.is_installed.return_value = True
+        mock_installer.configure.return_value = True
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                with patch.object(self.cli.repo_manager, 'clone_repository', return_value=True):
+                    with patch.object(self.cli.detector, 'detect', return_value=Technology.PYTHON):
+                        with patch.object(self.cli, '_get_installer', return_value=mock_installer):
+                            result = self.cli.process_repository('https://github.com/user/repo')
+                            self.assertTrue(result)
+
+    def test_process_repository_install_and_configure(self):
+        """Test repository processing with installation and configuration."""
+        from src.detector import Technology
+
+        mock_installer = Mock()
+        mock_installer.is_installed.return_value = False
+        mock_installer.install.return_value = True
+        mock_installer.configure.return_value = True
+
+        with patch.object(self.cli, 'ensure_git_installed', return_value=True):
+            with patch.object(self.cli, 'safe_rmtree', return_value=True):
+                with patch.object(self.cli.repo_manager, 'clone_repository', return_value=True):
+                    with patch.object(self.cli.detector, 'detect', return_value=Technology.NODEJS):
+                        with patch.object(self.cli, '_get_installer', return_value=mock_installer):
+                            result = self.cli.process_repository('https://github.com/user/repo')
+                            self.assertTrue(result)
+                            mock_installer.install.assert_called_once()
+                            mock_installer.configure.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
