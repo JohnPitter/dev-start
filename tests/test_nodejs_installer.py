@@ -1,0 +1,178 @@
+"""Tests for Node.js installer."""
+import unittest
+import subprocess
+from pathlib import Path
+from unittest.mock import Mock, patch, MagicMock
+import tempfile
+import shutil
+import json
+
+from src.installers.nodejs_installer import NodeJSInstaller
+from src.proxy_manager import ProxyManager
+
+
+class TestNodeJSInstaller(unittest.TestCase):
+    """Test Node.js installer functionality."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.proxy_manager = ProxyManager()
+        self.installer = NodeJSInstaller(self.temp_dir, self.proxy_manager)
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    def test_detect_version_from_package_json(self):
+        """Test detecting Node.js version from package.json."""
+        package_json = {
+            "name": "test-project",
+            "engines": {
+                "node": ">=18.0.0"
+            }
+        }
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text(json.dumps(package_json), encoding='utf-8')
+
+        version = self.installer.detect_version()
+        self.assertEqual(version, '18.0.0')
+
+    def test_detect_version_default(self):
+        """Test default Node.js version when no package.json exists."""
+        version = self.installer.detect_version()
+        self.assertEqual(version, '20.11.0')
+
+    @patch('subprocess.run')
+    def test_is_installed_true(self, mock_run):
+        """Test checking if Node.js is installed (true case)."""
+        mock_run.return_value = Mock(returncode=0, stdout='v20.11.0')
+        self.assertTrue(self.installer.is_installed())
+
+    @patch('subprocess.run')
+    def test_is_installed_false(self, mock_run):
+        """Test checking if Node.js is not installed."""
+        mock_run.side_effect = FileNotFoundError()
+        self.assertFalse(self.installer.is_installed())
+
+    @patch('subprocess.run')
+    def test_is_npm_installed_true(self, mock_run):
+        """Test checking if npm is installed (true case)."""
+        mock_run.return_value = Mock(returncode=0, stdout='9.5.0')
+        self.assertTrue(self.installer.is_npm_installed())
+
+    @patch('subprocess.run')
+    def test_is_npm_installed_false(self, mock_run):
+        """Test checking if npm is not installed."""
+        mock_run.side_effect = FileNotFoundError()
+        self.assertFalse(self.installer.is_npm_installed())
+
+    def test_install_already_installed(self):
+        """Test install when Node.js is already installed."""
+        with patch.object(self.installer, 'is_installed', return_value=True):
+            result = self.installer.install()
+            self.assertTrue(result)
+
+    def test_configure_npm_not_found(self):
+        """Test configure when npm is not found."""
+        with patch.object(self.installer, 'is_npm_installed', return_value=False):
+            result = self.installer.configure()
+            self.assertFalse(result)
+
+    def test_configure_with_package_json(self):
+        """Test configure with package.json present."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        with patch.object(self.installer, 'is_npm_installed', return_value=True):
+            with patch.object(self.installer, '_run_npm_install', return_value=True):
+                with patch.object(self.installer, '_ensure_npm_config'):
+                    result = self.installer.configure()
+                    self.assertTrue(result)
+
+    def test_configure_no_package_json(self):
+        """Test configure when no package.json exists."""
+        with patch.object(self.installer, 'is_npm_installed', return_value=True):
+            with patch.object(self.installer, '_ensure_npm_config'):
+                result = self.installer.configure()
+                self.assertTrue(result)
+
+    def test_ensure_npm_config_creates_npmrc(self):
+        """Test ensuring npm config creates .npmrc file."""
+        npmrc_file = Path.home() / '.npmrc'
+
+        # Remove existing .npmrc if it exists
+        if npmrc_file.exists():
+            backup_content = npmrc_file.read_text(encoding='utf-8')
+            npmrc_file.unlink()
+        else:
+            backup_content = None
+
+        try:
+            self.installer._ensure_npm_config()
+            self.assertTrue(npmrc_file.exists())
+        finally:
+            # Restore original .npmrc
+            if backup_content:
+                npmrc_file.write_text(backup_content, encoding='utf-8')
+
+    @patch('subprocess.run')
+    def test_configure_npm_proxy(self, mock_run):
+        """Test configuring npm proxy settings."""
+        self.proxy_manager.http_proxy = 'http://proxy:8080'
+        self.proxy_manager.https_proxy = 'https://proxy:8080'
+
+        self.installer._configure_npm_proxy()
+
+        # Verify npm config commands were called
+        self.assertEqual(mock_run.call_count, 2)
+
+    @patch('subprocess.run')
+    def test_run_npm_install_success(self, mock_run):
+        """Test running npm install successfully."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        mock_run.return_value = Mock(returncode=0, stderr='')
+        result = self.installer._run_npm_install()
+        self.assertTrue(result)
+
+    @patch('subprocess.run')
+    def test_run_npm_install_failure(self, mock_run):
+        """Test running npm install with failure."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        mock_run.return_value = Mock(returncode=1, stderr='Error: Package not found')
+        result = self.installer._run_npm_install()
+        self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_run_npm_install_timeout(self, mock_run):
+        """Test running npm install with timeout."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        mock_run.side_effect = subprocess.TimeoutExpired('npm', 600)
+        result = self.installer._run_npm_install()
+        self.assertFalse(result)
+
+    @patch('subprocess.run')
+    def test_run_npm_install_not_found(self, mock_run):
+        """Test running npm install when npm not found."""
+        # Create package.json
+        package_file = self.temp_dir / 'package.json'
+        package_file.write_text('{"name": "test"}', encoding='utf-8')
+
+        mock_run.side_effect = FileNotFoundError()
+        result = self.installer._run_npm_install()
+        self.assertFalse(result)
+
+
+if __name__ == '__main__':
+    unittest.main()
