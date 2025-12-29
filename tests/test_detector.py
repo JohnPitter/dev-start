@@ -152,6 +152,29 @@ class TestTechnologyDetector(unittest.TestCase):
         result = self.detector.detect(self.temp_dir)
         self.assertEqual(result, Technology.PYTHON)
 
+    def test_get_root_files_with_exception(self):
+        """Test getting root files when an exception occurs."""
+        from unittest.mock import MagicMock, patch
+
+        # Mock a path that throws an exception when iterdir() is called
+        mock_path = MagicMock()
+        mock_path.iterdir.side_effect = PermissionError("Access denied")
+
+        files = self.detector._get_root_files(mock_path)
+        self.assertEqual(files, [])
+
+    def test_matches_technology_with_invalid_tech(self):
+        """Test matching technology with invalid/unknown technology type."""
+        # Create a mock technology that doesn't exist in DETECTION_PATTERNS
+        class FakeTechnology:
+            pass
+
+        fake_tech = FakeTechnology()
+        files = ['requirements.txt']
+
+        result = self.detector._matches_technology(self.temp_dir, files, fake_tech)
+        self.assertFalse(result)
+
 
 if __name__ == '__main__':
     unittest.main()
