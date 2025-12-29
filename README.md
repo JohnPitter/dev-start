@@ -138,7 +138,7 @@ dev-start/
 
 ## Testes
 
-A aplicação possui **76+ testes automatizados** cobrindo todas as funcionalidades:
+A aplicação possui **329 testes automatizados** cobrindo todas as funcionalidades:
 
 ### Executar todos os testes com pytest
 ```bash
@@ -175,13 +175,18 @@ python -m unittest tests.test_integration
 
 ### Cobertura de Testes
 
-#### Testes Unitários (46 testes)
-- **Detector de Tecnologias** - 4 testes
-- **Gerenciador de Proxy** - 7 testes
-- **Gerenciador de Ambiente** - 7 testes
-- **Instaladores (Git, Python, Node.js)** - 14 testes
+#### Testes Unitários (234 testes)
+- **Detector de Tecnologias** - 19 testes
+- **Gerenciador de Proxy** - 6 testes
+- **Gerenciador de Ambiente** - 14 testes
 - **Gerenciador de Repositórios** - 6 testes
-- **Testes de Integração** - 8 testes
+- **Testes de Integração** - 7 testes
+- **Instaladores Base** - 24 testes
+- **CLI Básico** - 31 testes
+- **Git Installer** - 26 testes
+- **Java Installer** - 78 testes
+- **Python Installer** - 27 testes
+- **Node.js Installer** - 24 testes
 
 #### Testes E2E (5 testes)
 - Clonagem de repositórios reais do GitHub
@@ -196,13 +201,18 @@ python -m unittest tests.test_integration
 - Detecção de padrões (<0.5ms)
 - Eficiência de memória com arquivos grandes
 
-#### Testes de GUI (24 testes)
-- Componentes de relatório
-- Redirecionamento de logs
-- Widgets e interface
-- Integração GUI
+#### Testes de GUI (56 testes)
+- Componentes de relatório (6 testes)
+- Redirecionamento de logs (3 testes)
+- Widgets e interface (27 testes)
+- Integração e instalação completa (14 testes)
+- Main e inicialização (6 testes)
 
-**Total: 76+ testes**
+#### Testes de Instaladores Específicos (28 testes)
+- Git Installer - 26 testes
+- Instaladores base - 24 testes
+
+**Total: 329 testes**
 
 ### Relatório de Cobertura
 
@@ -214,7 +224,16 @@ pytest tests/ --cov=src --cov-report=html
 start htmlcov/index.html  # Windows
 ```
 
-**Cobertura atual: ~26%** (núcleo testado, CLI e GUI não executados diretamente nos testes)
+**Cobertura atual: 96.54%** - Cobertura quase completa de todos os módulos
+
+Módulos com 100% de cobertura:
+- detector.py
+- env_manager.py
+- proxy_manager.py
+- repo_manager.py
+- gui.py (99.74%)
+- nodejs_installer.py
+- python_installer.py
 
 ## Licença
 
