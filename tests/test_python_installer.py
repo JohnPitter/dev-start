@@ -172,7 +172,7 @@ class TestPythonInstaller(unittest.TestCase):
         requirements_file = self.temp_dir / 'requirements.txt'
         requirements_file.write_text('requests', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=0, stderr='')
+        mock_run.return_value = Mock(returncode=0, stdout='', stderr='')
         result = self.installer._run_pip_install(venv_path)
         self.assertTrue(result)
 
@@ -189,7 +189,7 @@ class TestPythonInstaller(unittest.TestCase):
         requirements_file = self.temp_dir / 'requirements.txt'
         requirements_file.write_text('requests', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=1, stderr='Error: Package not found')
+        mock_run.return_value = Mock(returncode=1, stdout='', stderr='Error: Package not found')
         result = self.installer._run_pip_install(venv_path)
         self.assertFalse(result)
 
@@ -226,7 +226,7 @@ class TestPythonInstaller(unittest.TestCase):
     def test_configure_pip_install_fails(self, mock_run):
         """Test configure when pip installation fails."""
         with patch.object(self.installer, 'is_pip_installed', return_value=False):
-            mock_run.side_effect = Exception("Failed to install pip")
+            mock_run.side_effect = subprocess.CalledProcessError(1, 'pip')
             result = self.installer.configure()
             self.assertFalse(result)
 
@@ -277,7 +277,7 @@ class TestPythonInstaller(unittest.TestCase):
         setup_file = self.temp_dir / 'setup.py'
         setup_file.write_text('from setuptools import setup', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=0, stderr='')
+        mock_run.return_value = Mock(returncode=0, stdout='', stderr='')
         result = self.installer._run_pip_install(venv_path)
         self.assertTrue(result)
         # Verify pip install -e . was called
@@ -297,7 +297,7 @@ class TestPythonInstaller(unittest.TestCase):
         pyproject_file = self.temp_dir / 'pyproject.toml'
         pyproject_file.write_text('[tool.poetry]', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=0, stderr='')
+        mock_run.return_value = Mock(returncode=0, stdout='', stderr='')
         result = self.installer._run_pip_install(venv_path)
         self.assertTrue(result)
         # Verify pip install . was called
@@ -319,7 +319,7 @@ class TestPythonInstaller(unittest.TestCase):
         requirements_file = self.temp_dir / 'requirements.txt'
         requirements_file.write_text('requests', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=0, stderr='')
+        mock_run.return_value = Mock(returncode=0, stdout='', stderr='')
         result = self.installer._run_pip_install(venv_path)
         self.assertTrue(result)
         # Verify --proxy was added to command
@@ -357,7 +357,7 @@ class TestPythonInstaller(unittest.TestCase):
         requirements_file = self.temp_dir / 'requirements.txt'
         requirements_file.write_text('requests', encoding='utf-8')
 
-        mock_run.side_effect = Exception("Unknown error")
+        mock_run.side_effect = subprocess.SubprocessError("Unknown error")
         result = self.installer._run_pip_install(venv_path)
         self.assertFalse(result)
 

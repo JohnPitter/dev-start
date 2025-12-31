@@ -3,6 +3,7 @@ import pytest
 import unittest
 import tempfile
 import shutil
+import subprocess
 from pathlib import Path
 from src.proxy_manager import ProxyManager
 from src.repo_manager import RepositoryManager
@@ -10,7 +11,21 @@ from src.detector import TechnologyDetector, Technology
 from src.env_manager import EnvironmentManager
 
 
+def is_git_available():
+    """Check if git is available and can access the network."""
+    try:
+        result = subprocess.run(
+            ['git', 'ls-remote', 'https://github.com/octocat/Hello-World.git', 'HEAD'],
+            capture_output=True,
+            timeout=10
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        return False
+
+
 @pytest.mark.e2e
+@unittest.skipUnless(is_git_available(), "Git or network not available")
 class TestE2ERealRepositories(unittest.TestCase):
     """E2E tests with real public repositories."""
 

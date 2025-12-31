@@ -1,28 +1,25 @@
 """Java/SpringBoot installer."""
-import os
-import shutil
 import subprocess
-import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import xml.etree.ElementTree as ET
+
 from .base import BaseInstaller
+from ..constants import (
+    DOWNLOAD_URLS,
+    DEFAULT_VERSIONS,
+    BUILD_TIMEOUT,
+    get_tools_dir,
+)
+from ..detector import TechnologyDetector, BuildTool
+from ..logger import get_logger
+from ..exceptions import ExtractionError
+
+logger = get_logger(__name__)
 
 
 class JavaInstaller(BaseInstaller):
     """Installer for Java and Maven/Gradle projects."""
-
-    JAVA_DOWNLOAD_URLS = {
-        '17': 'https://download.oracle.com/java/17/latest/jdk-17_windows-x64_bin.zip',
-        '11': 'https://download.oracle.com/java/11/latest/jdk-11_windows-x64_bin.zip'
-    }
-
-    # Multiple Maven download URLs as fallback
-    MAVEN_URLS = [
-        'https://dlcdn.apache.org/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip',
-        'https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip',
-        'https://mirrors.estointernet.in/apache/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip'
-    ]
 
     def detect_version(self) -> Optional[str]:
         """Detect Java version from pom.xml or build.gradle."""
@@ -34,7 +31,11 @@ class JavaInstaller(BaseInstaller):
         if gradle_file.exists():
             return self._detect_from_gradle(gradle_file)
 
-        return '17'  # Default to Java 17
+        gradle_kts_file = self.project_path / 'build.gradle.kts'
+        if gradle_kts_file.exists():
+            return self._detect_from_gradle(gradle_kts_file)
+
+        return DEFAULT_VERSIONS['java']
 
     def _detect_from_pom(self, pom_file: Path) -> str:
         """Extract Java version from pom.xml."""
@@ -51,10 +52,12 @@ class JavaInstaller(BaseInstaller):
             for prop in root.findall('.//maven:properties/maven:maven.compiler.source', ns):
                 return prop.text.strip()
 
-        except Exception:
-            pass
+        except ET.ParseError as e:
+            logger.warning(f"Failed to parse pom.xml", details=str(e))
+        except IOError as e:
+            logger.warning(f"Failed to read pom.xml", details=str(e))
 
-        return '17'
+        return DEFAULT_VERSIONS['java']
 
     def _detect_from_gradle(self, gradle_file: Path) -> str:
         """Extract Java version from build.gradle."""
@@ -65,10 +68,10 @@ class JavaInstaller(BaseInstaller):
                     if 'sourceCompatibility' in line and '=' in line:
                         version = line.split('=')[1].strip().strip("'\"")
                         return version
-        except Exception:
-            pass
+        except IOError as e:
+            logger.warning(f"Failed to read gradle file", details=str(e))
 
-        return '17'
+        return DEFAULT_VERSIONS['java']
 
     def is_installed(self) -> bool:
         """Check if Java is installed."""
@@ -88,47 +91,40 @@ class JavaInstaller(BaseInstaller):
 
     def install(self) -> bool:
         """Install Java and Maven."""
-        print("Installing Java...")
+        logger.progress("Installing Java...")
         version = self.detect_version()
 
         # Use version 17 if specific version not available
-        download_version = version if version in self.JAVA_DOWNLOAD_URLS else '17'
+        download_version = version if version in DOWNLOAD_URLS['java'] else DEFAULT_VERSIONS['java']
 
-        tools_dir = Path.home() / '.dev-start' / 'tools'
+        tools_dir = get_tools_dir()
         java_dir = tools_dir / f'jdk-{download_version}'
 
         if not java_dir.exists():
-            print(f"Downloading Java {download_version}...")
-            zip_path = tools_dir / f'jdk-{download_version}.zip'
+            logger.progress(f"Downloading Java {download_version}...")
+            download_url = DOWNLOAD_URLS['java'].get(download_version)
 
-            if not self.download_file(self.JAVA_DOWNLOAD_URLS[download_version], zip_path):
-                print("Failed to download Java. Please install manually.")
+            if not download_url:
+                logger.error(f"No download URL for Java version {download_version}")
                 return False
 
-            print("Extracting Java...")
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(tools_dir)
-            zip_path.unlink()
+            success, extracted_dir = self.download_and_extract(download_url, tools_dir)
 
-        # Set JAVA_HOME
+            if not success:
+                logger.error("Failed to download Java. Please install manually.")
+                return False
+
+            # Rename extracted directory if needed
+            if extracted_dir and extracted_dir != java_dir and extracted_dir.exists():
+                try:
+                    extracted_dir.rename(java_dir)
+                except OSError as e:
+                    logger.warning(f"Could not rename extracted directory", details=str(e))
+
+        # Setup Java environment
         java_home = str(java_dir)
-        java_bin = f"{java_home}\\bin"
-
-        # Set environment variables for persistence
-        self.env_manager.append_to_env('JAVA_HOME', java_home)
-        self.env_manager.set_system_path(java_bin)
-
-        # Update current process environment
-        os.environ['JAVA_HOME'] = java_home
-        if 'PATH' in os.environ:
-            if java_bin not in os.environ['PATH']:
-                os.environ['PATH'] = f"{java_bin}{os.pathsep}{os.environ['PATH']}"
-        else:
-            os.environ['PATH'] = java_bin
-
-        print("✓ Java environment variables configured")
-        print(f"  JAVA_HOME: {java_home}")
-        print(f"  PATH: {java_bin} (added)")
+        java_bin = str(java_dir / 'bin')
+        self.setup_tool_environment('JAVA', java_home, java_bin)
 
         # Install Maven if pom.xml exists
         if (self.project_path / 'pom.xml').exists():
@@ -141,123 +137,89 @@ class JavaInstaller(BaseInstaller):
         maven_dir = tools_dir / 'maven'
 
         if not maven_dir.exists():
-            print("Downloading Maven...")
-            zip_path = tools_dir / 'maven.zip'
+            logger.progress("Downloading Maven...")
+
+            maven_urls = DOWNLOAD_URLS['maven'].get(DEFAULT_VERSIONS['maven'], [])
+            if isinstance(maven_urls, str):
+                maven_urls = [maven_urls]
 
             # Try each URL until one succeeds
             download_success = False
-            for url in self.MAVEN_URLS:
-                print(f"Trying: {url}")
-                if self.download_file(url, zip_path):
+            for url in maven_urls:
+                logger.info(f"Trying: {url}")
+                success, extracted_dir = self.download_and_extract(url, tools_dir)
+
+                if success:
                     download_success = True
-                    print("✓ Maven downloaded successfully")
+                    logger.success("Maven downloaded successfully")
+
+                    # Rename extracted directory
+                    if extracted_dir and extracted_dir.exists():
+                        try:
+                            extracted_dir.rename(maven_dir)
+                            logger.debug(f"Renamed {extracted_dir.name} to maven")
+                        except OSError as e:
+                            logger.error(f"Failed to rename Maven directory", details=str(e))
+                            return False
                     break
                 else:
-                    print(f"✗ Failed to download from this mirror, trying next...")
+                    logger.warning("Failed to download from this mirror, trying next...")
 
             if not download_success:
-                print("✗ Failed to download Maven from all mirrors.")
-                print("Please install Maven manually from: https://maven.apache.org/download.cgi")
+                logger.error("Failed to download Maven from all mirrors")
+                logger.info("Please install Maven manually from: https://maven.apache.org/download.cgi")
                 return False
 
-            try:
-                print("Extracting Maven...")
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(tools_dir)
-
-                # Rename extracted directory
-                extracted_dir = None
-                for item in tools_dir.iterdir():
-                    if item.is_dir() and item.name.startswith('apache-maven'):
-                        extracted_dir = item
-                        print(f"Found extracted directory: {item.name}")
-                        item.rename(maven_dir)
-                        print(f"Renamed to: maven")
-                        break
-
-                if not extracted_dir:
-                    print("✗ Could not find extracted Maven directory")
-                    # List what was extracted
-                    print("Contents of tools directory:")
-                    for item in tools_dir.iterdir():
-                        print(f"  - {item.name} ({'dir' if item.is_dir() else 'file'})")
-                    return False
-
-                zip_path.unlink()
-                print("✓ Maven extracted successfully")
-
-                # Verify Maven bin directory
-                maven_bin = maven_dir / 'bin'
-                if maven_bin.exists():
-                    print(f"✓ Maven bin directory found: {maven_bin}")
-                    # List bin contents
-                    bin_files = list(maven_bin.iterdir())
-                    print(f"  Found {len(bin_files)} files in bin/")
-                    for f in bin_files[:5]:  # Show first 5 files
-                        print(f"    - {f.name}")
-                else:
-                    print(f"✗ Maven bin directory not found at: {maven_bin}")
-                    print("Maven directory contents:")
-                    for item in maven_dir.iterdir():
-                        print(f"  - {item.name} ({'dir' if item.is_dir() else 'file'})")
-
-            except Exception as e:
-                print(f"✗ Failed to extract Maven: {e}")
-                import traceback
-                traceback.print_exc()
+            # Verify Maven bin directory
+            maven_bin_dir = maven_dir / 'bin'
+            if maven_bin_dir.exists():
+                logger.success(f"Maven bin directory found: {maven_bin_dir}")
+            else:
+                logger.error(f"Maven bin directory not found at: {maven_bin_dir}")
+                # List directory contents for debugging
+                if maven_dir.exists():
+                    contents = [item.name for item in maven_dir.iterdir()]
+                    logger.debug(f"Maven directory contents: {contents}")
                 return False
 
-        # Set Maven environment
+        # Setup Maven environment
         maven_home = str(maven_dir)
-        maven_bin = f"{maven_dir}\\bin"
-
-        # Set environment variables for persistence
-        self.env_manager.append_to_env('MAVEN_HOME', maven_home)
-        self.env_manager.set_system_path(maven_bin)
-
-        # Update current process environment
-        os.environ['MAVEN_HOME'] = maven_home
-        if 'PATH' in os.environ:
-            if maven_bin not in os.environ['PATH']:
-                os.environ['PATH'] = f"{maven_bin}{os.pathsep}{os.environ['PATH']}"
-        else:
-            os.environ['PATH'] = maven_bin
-
-        print("\n✓ Maven environment variables configured")
-        print(f"  MAVEN_HOME: {maven_home}")
-        print(f"  PATH: {maven_bin} (added)")
+        maven_bin = str(maven_dir / 'bin')
+        self.setup_tool_environment('MAVEN', maven_home, maven_bin)
 
         return True
 
     def configure(self) -> bool:
         """Configure Java project."""
-        print("Configuring Java project...")
+        logger.progress("Configuring Java project...")
 
-        # Initialize Maven availability flag
+        # Detect build tool
+        detector = TechnologyDetector()
+        build_tool = detector.detect_build_tool(self.project_path)
+
         maven_available = False
+        gradle_available = False
 
-        # Check and install Maven if needed (for Maven projects)
+        # Handle Maven projects
         if (self.project_path / 'pom.xml').exists():
             if not self.is_maven_installed():
-                print("\nMaven not found. Installing Maven...")
-                tools_dir = Path.home() / '.dev-start' / 'tools'
+                logger.info("Maven not found. Installing Maven...")
+                tools_dir = get_tools_dir()
                 tools_dir.mkdir(parents=True, exist_ok=True)
                 if self._install_maven(tools_dir):
                     maven_available = True
-                    print("\n✓ Maven installed successfully")
+                    logger.success("Maven installed successfully")
                 else:
-                    print("\n⚠ Warning: Failed to install Maven")
-                    print("⚠ Skipping dependency installation - please install Maven manually")
-                    maven_available = False
+                    logger.warning("Failed to install Maven")
+                    logger.warning("Skipping dependency installation - please install Maven manually")
             else:
-                print("\n✓ Maven is already installed")
+                logger.success("Maven is already installed")
                 maven_available = True
 
-            # Ensure .m2 directory exists only if Maven is available
             if maven_available:
                 self._ensure_maven_directories()
 
-        # Create application.properties if it doesn't exist (for Spring Boot)
+        # Create application.properties if needed (for Spring Boot)
         app_props = self.project_path / 'src' / 'main' / 'resources' / 'application.properties'
         if not app_props.exists() and (self.project_path / 'pom.xml').exists():
             self.env_manager.write_config_file(
@@ -270,24 +232,21 @@ class JavaInstaller(BaseInstaller):
         if self.proxy_manager.http_proxy and maven_available:
             self._configure_maven_proxy()
 
-        # Run Maven clean install to download all dependencies (only if Maven is available)
+        # Run build based on detected build tool
         build_success = False
-        if (self.project_path / 'pom.xml').exists() and maven_available:
-            print("\nInstalling project dependencies with Maven...")
-            if self._run_maven_install():
-                build_success = True
-            else:
-                print("⚠ Warning: Maven install failed, but continuing...")
-        elif (self.project_path / 'pom.xml').exists() and not maven_available:
-            print("\n⚠ Skipping Maven dependency installation (Maven not available)")
 
-        # Run Gradle build for Gradle projects
-        if (self.project_path / 'build.gradle').exists():
-            print("\nInstalling project dependencies with Gradle...")
+        if build_tool == BuildTool.GRADLE or (self.project_path / 'build.gradle').exists():
+            logger.progress("Installing project dependencies with Gradle...")
             if self._run_gradle_build():
                 build_success = True
             else:
-                print("⚠ Warning: Gradle build failed, but continuing...")
+                logger.warning("Gradle build failed, but continuing...")
+        elif maven_available and (self.project_path / 'pom.xml').exists():
+            logger.progress("Installing project dependencies with Maven...")
+            if self._run_maven_install():
+                build_success = True
+            else:
+                logger.warning("Maven install failed, but continuing...")
 
         # Validate build artifacts
         if build_success:
@@ -295,26 +254,23 @@ class JavaInstaller(BaseInstaller):
 
         return True
 
-    def _validate_build(self):
+    def _validate_build(self) -> None:
         """Validate that build artifacts were created successfully."""
-        print("\n" + "=" * 60)
-        print("Build Validation")
-        print("=" * 60)
+        logger.section("Build Validation")
 
         # Check for Maven build artifacts
         target_dir = self.project_path / 'target'
         if target_dir.exists():
-            # Look for JAR files
             jar_files = list(target_dir.glob('*.jar'))
             if jar_files:
-                print(f"✓ Build artifacts found:")
+                logger.success("Build artifacts found:")
                 for jar in jar_files:
                     size_mb = jar.stat().st_size / (1024 * 1024)
-                    print(f"  - {jar.name} ({size_mb:.2f} MB)")
-                print(f"\n✓ Application is ready to run!")
-                print(f"  To run: cd {self.project_path} && java -jar target/{jar_files[0].name}")
+                    logger.info(f"  - {jar.name} ({size_mb:.2f} MB)")
+                logger.success("Application is ready to run!")
+                logger.info(f"  To run: cd {self.project_path} && java -jar target/{jar_files[0].name}")
             else:
-                print("⚠ No JAR files found in target directory")
+                logger.warning("No JAR files found in target directory")
 
         # Check for Gradle build artifacts
         build_dir = self.project_path / 'build'
@@ -323,138 +279,88 @@ class JavaInstaller(BaseInstaller):
             if libs_dir.exists():
                 jar_files = list(libs_dir.glob('*.jar'))
                 if jar_files:
-                    print(f"✓ Build artifacts found:")
+                    logger.success("Build artifacts found:")
                     for jar in jar_files:
                         size_mb = jar.stat().st_size / (1024 * 1024)
-                        print(f"  - {jar.name} ({size_mb:.2f} MB)")
-                    print(f"\n✓ Application is ready to run!")
-                    print(f"  To run: cd {self.project_path} && java -jar build/libs/{jar_files[0].name}")
-
-        print("=" * 60)
+                        logger.info(f"  - {jar.name} ({size_mb:.2f} MB)")
+                    logger.success("Application is ready to run!")
+                    logger.info(f"  To run: cd {self.project_path} && java -jar build/libs/{jar_files[0].name}")
 
     def _run_maven_install(self) -> bool:
         """Run Maven clean install to download dependencies."""
-        # Try to find Maven executable
-        print("\nSearching for Maven executable...")
+        logger.progress("Searching for Maven executable...")
         maven_cmd = self._find_maven_executable()
 
         if not maven_cmd:
-            print("\n✗ Maven (mvn) not found in PATH or installation directory")
-            print("  Checked locations:")
-            tools_dir = Path.home() / '.dev-start' / 'tools'
+            tools_dir = get_tools_dir()
             maven_dir = tools_dir / 'maven'
-            print(f"    - {maven_dir / 'bin' / 'mvn.cmd'}")
-            print(f"    - {maven_dir / 'bin' / 'mvn.bat'}")
-            print(f"    - {maven_dir / 'bin' / 'mvn'}")
-            print(f"    - PATH")
+            logger.error("Maven (mvn) not found in PATH or installation directory")
+            logger.info(f"Checked locations: {maven_dir / 'bin'}, PATH")
             return False
 
-        try:
-            # Show the full command being executed
-            cmd_display = f"{Path(maven_cmd).name} clean install -DskipTests"
-            print(f"\nRunning: {cmd_display}")
-            print(f"  Full path: {maven_cmd}")
+        logger.progress(f"Running: mvn clean install -DskipTests")
+        logger.debug(f"Full path: {maven_cmd}")
 
-            result = subprocess.run(
-                [maven_cmd, 'clean', 'install', '-DskipTests'],
-                cwd=str(self.project_path),
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 minutes timeout
-            )
+        success, output = self.run_command(
+            [maven_cmd, 'clean', 'install', '-DskipTests'],
+            timeout=BUILD_TIMEOUT
+        )
 
-            if result.returncode == 0:
-                print("\n✓ Maven dependencies installed successfully")
-                print("✓ Project built successfully")
-                return True
-            else:
-                print(f"\n✗ Maven install failed with return code {result.returncode}")
-                if result.stderr:
-                    print(f"Error: {result.stderr[:500]}")  # Print first 500 chars
-                return False
-        except subprocess.TimeoutExpired:
-            print("\n✗ Maven install timed out after 10 minutes")
-            return False
-        except FileNotFoundError as e:
-            print(f"\n✗ Maven executable not found: {maven_cmd}")
-            print(f"  Error: {e}")
-            return False
-        except Exception as e:
-            print(f"\n✗ Error running Maven: {e}")
-            return False
+        if success:
+            logger.success("Maven dependencies installed successfully")
+            logger.success("Project built successfully")
+        else:
+            logger.error("Maven install failed")
+            if output:
+                logger.debug(f"Output: {output[:500]}")
+
+        return success
 
     def _find_maven_executable(self) -> Optional[str]:
         """Find Maven executable in PATH or installation directory."""
-        import shutil
-
-        # First, try the installation directory (most reliable for just-installed Maven)
-        tools_dir = Path.home() / '.dev-start' / 'tools'
+        tools_dir = get_tools_dir()
         maven_dir = tools_dir / 'maven'
 
-        # Try mvn.cmd (Windows)
-        mvn_cmd = maven_dir / 'bin' / 'mvn.cmd'
-        if mvn_cmd.exists():
-            print(f"Found Maven at: {mvn_cmd}")
-            return str(mvn_cmd)
-
-        # Try mvn.bat (Windows alternative)
-        mvn_bat = maven_dir / 'bin' / 'mvn.bat'
-        if mvn_bat.exists():
-            print(f"Found Maven at: {mvn_bat}")
-            return str(mvn_bat)
-
-        # Try mvn (Unix-like)
-        mvn_unix = maven_dir / 'bin' / 'mvn'
-        if mvn_unix.exists():
-            print(f"Found Maven at: {mvn_unix}")
-            return str(mvn_unix)
-
-        # If not in installation directory, try to find mvn in PATH
-        mvn_in_path = shutil.which('mvn')
-        if mvn_in_path:
-            print(f"Found Maven in PATH: {mvn_in_path}")
-            return mvn_in_path
-
-        return None
+        return self.find_executable('mvn', [maven_dir / 'bin'])
 
     def _run_gradle_build(self) -> bool:
         """Run Gradle build to download dependencies."""
-        try:
-            # Try gradlew first (Windows)
-            gradle_cmd = 'gradlew.bat' if (self.project_path / 'gradlew.bat').exists() else 'gradle'
-            print(f"Running: {gradle_cmd} build -x test")
+        # Try gradlew first (Windows)
+        gradlew_bat = self.project_path / 'gradlew.bat'
+        gradlew = self.project_path / 'gradlew'
 
-            result = subprocess.run(
-                [gradle_cmd, 'build', '-x', 'test'],
-                cwd=str(self.project_path),
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 minutes timeout
-            )
-
-            if result.returncode == 0:
-                print("✓ Gradle dependencies installed successfully")
-                return True
-            else:
-                print(f"✗ Gradle build failed with return code {result.returncode}")
-                if result.stderr:
-                    print(f"Error: {result.stderr[:500]}")
+        if gradlew_bat.exists():
+            gradle_cmd = str(gradlew_bat)
+        elif gradlew.exists():
+            gradle_cmd = str(gradlew)
+        else:
+            # Fall back to system gradle
+            gradle_cmd = self.find_executable('gradle')
+            if not gradle_cmd:
+                logger.error("Gradle not found")
                 return False
-        except subprocess.TimeoutExpired:
-            print("✗ Gradle build timed out after 10 minutes")
-            return False
-        except FileNotFoundError:
-            print(f"✗ {gradle_cmd} not found")
-            return False
-        except Exception as e:
-            print(f"✗ Error running Gradle: {e}")
-            return False
 
-    def _ensure_maven_directories(self):
+        logger.progress(f"Running: {Path(gradle_cmd).name} build -x test")
+
+        success, output = self.run_command(
+            [gradle_cmd, 'build', '-x', 'test'],
+            timeout=BUILD_TIMEOUT
+        )
+
+        if success:
+            logger.success("Gradle dependencies installed successfully")
+        else:
+            logger.error("Gradle build failed")
+            if output:
+                logger.debug(f"Output: {output[:500]}")
+
+        return success
+
+    def _ensure_maven_directories(self) -> None:
         """Ensure Maven directories exist."""
         maven_home = Path.home() / '.m2'
         maven_home.mkdir(exist_ok=True)
-        print(f"\n✓ Maven directory created/verified: {maven_home}")
+        logger.success(f"Maven directory created/verified: {maven_home}")
 
         # Create repository directory
         repository_dir = maven_home / 'repository'
@@ -471,15 +377,17 @@ class JavaInstaller(BaseInstaller):
   <localRepository>${user.home}/.m2/repository</localRepository>
 </settings>
 """
-            with open(settings_file, 'w', encoding='utf-8') as f:
-                f.write(default_settings)
-            print(f"✓ Created Maven settings.xml: {settings_file}")
+            settings_file.write_text(default_settings, encoding='utf-8')
+            logger.success(f"Created Maven settings.xml: {settings_file}")
 
-    def _configure_maven_proxy(self):
+    def _configure_maven_proxy(self) -> None:
         """Configure Maven proxy settings."""
         maven_dir = Path.home() / '.m2'
         maven_dir.mkdir(exist_ok=True)
         settings_file = maven_dir / 'settings.xml'
+
+        proxy_host = self._get_proxy_host(self.proxy_manager.http_proxy)
+        proxy_port = self._get_proxy_port(self.proxy_manager.http_proxy)
 
         proxy_config = f"""<?xml version="1.0" encoding="UTF-8"?>
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
@@ -492,15 +400,14 @@ class JavaInstaller(BaseInstaller):
       <id>http-proxy</id>
       <active>true</active>
       <protocol>http</protocol>
-      <host>{self._get_proxy_host(self.proxy_manager.http_proxy)}</host>
-      <port>{self._get_proxy_port(self.proxy_manager.http_proxy)}</port>
+      <host>{proxy_host}</host>
+      <port>{proxy_port}</port>
     </proxy>
   </proxies>
 </settings>
 """
-        with open(settings_file, 'w', encoding='utf-8') as f:
-            f.write(proxy_config)
-        print(f"✓ Maven proxy configured in settings.xml")
+        settings_file.write_text(proxy_config, encoding='utf-8')
+        logger.success("Maven proxy configured in settings.xml")
 
     def _get_proxy_host(self, proxy_url: str) -> str:
         """Extract host from proxy URL."""

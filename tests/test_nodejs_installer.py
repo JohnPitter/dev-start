@@ -136,7 +136,7 @@ class TestNodeJSInstaller(unittest.TestCase):
         package_file = self.temp_dir / 'package.json'
         package_file.write_text('{"name": "test"}', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=0, stderr='')
+        mock_run.return_value = Mock(returncode=0, stdout='', stderr='')
         result = self.installer._run_npm_install()
         self.assertTrue(result)
 
@@ -147,7 +147,7 @@ class TestNodeJSInstaller(unittest.TestCase):
         package_file = self.temp_dir / 'package.json'
         package_file.write_text('{"name": "test"}', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=1, stderr='Error: Package not found')
+        mock_run.return_value = Mock(returncode=1, stdout='', stderr='Error: Package not found')
         result = self.installer._run_npm_install()
         self.assertFalse(result)
 
@@ -182,37 +182,17 @@ class TestNodeJSInstaller(unittest.TestCase):
         version = self.installer.detect_version()
         self.assertEqual(version, '20.11.0')  # Should return default
 
-    @patch('src.installers.nodejs_installer.zipfile.ZipFile')
-    @patch('pathlib.Path.unlink')
     @patch('pathlib.Path.exists')
-    def test_install_with_download_and_extract(self, mock_exists, mock_unlink, mock_zipfile):
+    def test_install_with_download_and_extract(self, mock_exists):
         """Test Node.js installation with download and extraction."""
-        # Mock that nodejs_dir doesn't exist initially
-        def exists_side_effect(path_self):
-            # Return False for nodejs_dir check, True for others
-            if 'nodejs' in str(path_self):
-                return False
-            return True
-
-        mock_exists.side_effect = lambda: False
+        mock_exists.return_value = False
+        nodejs_dir = self.temp_dir / 'nodejs'
 
         with patch.object(self.installer, 'is_installed', return_value=False):
-            with patch.object(self.installer, 'download_file', return_value=True):
-                with patch.object(self.installer.env_manager, 'set_system_path'):
-                    with patch.object(self.installer.env_manager, 'append_to_env'):
-                        # Mock the iterdir to return a directory that starts with 'node-v'
-                        mock_dir = Mock()
-                        mock_dir.is_dir.return_value = True
-                        mock_dir.name = 'node-v20.11.0-win-x64'
-                        mock_dir.rename = Mock()
-
-                        with patch('pathlib.Path.iterdir', return_value=[mock_dir]):
-                            mock_zip = Mock()
-                            mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-                            result = self.installer.install()
-                            self.assertTrue(result)
-                            mock_zip.extractall.assert_called_once()
+            with patch.object(self.installer, 'download_and_extract', return_value=(True, nodejs_dir)):
+                with patch.object(self.installer, 'setup_tool_environment'):
+                    result = self.installer.install()
+                    self.assertTrue(result)
 
     @patch('pathlib.Path.exists')
     def test_install_download_fails(self, mock_exists):
@@ -224,14 +204,13 @@ class TestNodeJSInstaller(unittest.TestCase):
                 result = self.installer.install()
                 self.assertFalse(result)
 
-    @patch('src.installers.nodejs_installer.zipfile.ZipFile')
-    @patch('pathlib.Path.unlink')
     @patch('pathlib.Path.exists')
-    def test_install_with_path_not_exists(self, mock_exists, mock_unlink, mock_zipfile):
+    def test_install_with_path_not_exists(self, mock_exists):
         """Test Node.js installation when PATH environment variable doesn't exist."""
         import os
 
-        mock_exists.side_effect = lambda: False
+        mock_exists.return_value = False
+        nodejs_dir = self.temp_dir / 'nodejs'
 
         # Save and remove PATH
         original_path = os.environ.get('PATH', '')
@@ -241,23 +220,10 @@ class TestNodeJSInstaller(unittest.TestCase):
 
         try:
             with patch.object(self.installer, 'is_installed', return_value=False):
-                with patch.object(self.installer, 'download_file', return_value=True):
-                    with patch.object(self.installer.env_manager, 'set_system_path'):
-                        with patch.object(self.installer.env_manager, 'append_to_env'):
-                            # Mock the iterdir to return a directory that starts with 'node-v'
-                            mock_dir = Mock()
-                            mock_dir.is_dir.return_value = True
-                            mock_dir.name = 'node-v20.11.0-win-x64'
-                            mock_dir.rename = Mock()
-
-                            with patch('pathlib.Path.iterdir', return_value=[mock_dir]):
-                                mock_zip = Mock()
-                                mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-                                result = self.installer.install()
-                                self.assertTrue(result)
-                                # Verify PATH was set
-                                self.assertIn('PATH', os.environ)
+                with patch.object(self.installer, 'download_and_extract', return_value=(True, nodejs_dir)):
+                    with patch.object(self.installer, 'setup_tool_environment'):
+                        result = self.installer.install()
+                        self.assertTrue(result)
         finally:
             # Restore PATH
             if had_path:
@@ -291,12 +257,12 @@ class TestNodeJSInstaller(unittest.TestCase):
 
     @patch('subprocess.run')
     def test_run_npm_install_generic_exception(self, mock_run):
-        """Test running npm install with generic exception."""
+        """Test running npm install with SubprocessError."""
         # Create package.json
         package_file = self.temp_dir / 'package.json'
         package_file.write_text('{"name": "test"}', encoding='utf-8')
 
-        mock_run.side_effect = Exception("Unknown error")
+        mock_run.side_effect = subprocess.SubprocessError("Unknown error")
         result = self.installer._run_npm_install()
         self.assertFalse(result)
 

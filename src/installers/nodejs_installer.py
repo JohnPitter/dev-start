@@ -1,16 +1,24 @@
 """Node.js installer."""
 import json
 import subprocess
-import zipfile
 from pathlib import Path
 from typing import Optional
+
 from .base import BaseInstaller
+from ..constants import (
+    DOWNLOAD_URLS,
+    DOWNLOAD_CHECKSUMS,
+    DEFAULT_VERSIONS,
+    BUILD_TIMEOUT,
+    get_tools_dir,
+)
+from ..logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class NodeJSInstaller(BaseInstaller):
     """Installer for Node.js projects."""
-
-    NODEJS_DOWNLOAD_URL = 'https://nodejs.org/dist/v20.11.0/node-v20.11.0-win-x64.zip'
 
     def detect_version(self) -> Optional[str]:
         """Detect Node.js version from package.json."""
@@ -21,11 +29,14 @@ class NodeJSInstaller(BaseInstaller):
                 engines = data.get('engines', {})
                 node_version = engines.get('node', '')
                 if node_version:
+                    # Strip version prefixes like ^, ~, >=, etc.
                     return node_version.strip('^~>=<')
-            except Exception:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse package.json", details=str(e))
+            except IOError as e:
+                logger.warning(f"Failed to read package.json", details=str(e))
 
-        return '20.11.0'  # Default LTS version
+        return DEFAULT_VERSIONS['nodejs']
 
     def is_installed(self) -> bool:
         """Check if Node.js is installed."""
@@ -46,65 +57,59 @@ class NodeJSInstaller(BaseInstaller):
     def install(self) -> bool:
         """Install Node.js."""
         if self.is_installed():
-            print("Node.js is already installed.")
+            logger.info("Node.js is already installed")
             return True
 
-        print("Installing Node.js...")
-        tools_dir = Path.home() / '.dev-start' / 'tools'
+        logger.progress("Installing Node.js...")
+        tools_dir = get_tools_dir()
         nodejs_dir = tools_dir / 'nodejs'
+        version = DEFAULT_VERSIONS['nodejs']
 
         if not nodejs_dir.exists():
-            print("Downloading Node.js...")
-            zip_path = tools_dir / 'nodejs.zip'
+            logger.progress(f"Downloading Node.js {version}...")
 
-            if not self.download_file(self.NODEJS_DOWNLOAD_URL, zip_path):
-                print("Failed to download Node.js. Please install manually.")
+            download_url = DOWNLOAD_URLS['nodejs'].get(version)
+            expected_checksum = DOWNLOAD_CHECKSUMS.get('nodejs', {}).get(version)
+
+            if not download_url:
+                logger.error(f"No download URL for Node.js version {version}")
                 return False
 
-            print("Extracting Node.js...")
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(tools_dir)
+            success, extracted_dir = self.download_and_extract(
+                download_url,
+                tools_dir,
+                expected_checksum=expected_checksum
+            )
+
+            if not success:
+                logger.error("Failed to download Node.js. Please install manually.")
+                return False
 
             # Rename extracted directory
-            for item in tools_dir.iterdir():
-                if item.is_dir() and item.name.startswith('node-v'):
-                    item.rename(nodejs_dir)
-                    break
+            if extracted_dir and extracted_dir != nodejs_dir and extracted_dir.exists():
+                try:
+                    extracted_dir.rename(nodejs_dir)
+                    logger.debug(f"Renamed {extracted_dir.name} to nodejs")
+                except OSError as e:
+                    logger.warning(f"Could not rename extracted directory", details=str(e))
 
-            zip_path.unlink()
-
-        # Add to PATH
+        # Setup Node.js environment
         nodejs_path = str(nodejs_dir)
+        self.setup_tool_environment('NODE', nodejs_path, nodejs_path)
 
-        # Set environment variables for persistence
-        self.env_manager.set_system_path(nodejs_path)
-        self.env_manager.append_to_env('NODE_HOME', nodejs_path)
-
-        # Update current process environment
-        import os
-        os.environ['NODE_HOME'] = nodejs_path
-        if 'PATH' in os.environ:
-            if nodejs_path not in os.environ['PATH']:
-                os.environ['PATH'] = f"{nodejs_path}{os.pathsep}{os.environ['PATH']}"
-        else:
-            os.environ['PATH'] = nodejs_path
-
-        print("✓ Node.js environment variables configured")
-        print(f"  NODE_HOME: {nodejs_path}")
-        print(f"  PATH: {nodejs_path} (added)")
-
+        logger.success("Node.js installed successfully!")
         return True
 
     def configure(self) -> bool:
         """Configure Node.js project."""
-        print("\nConfiguring Node.js project...")
+        logger.progress("Configuring Node.js project...")
 
         # Check if npm is installed
         if not self.is_npm_installed():
-            print("\n✗ npm not found. npm should be installed with Node.js")
+            logger.error("npm not found. npm should be installed with Node.js")
             return False
-        else:
-            print("\n✓ npm is already installed")
+
+        logger.success("npm is already installed")
 
         # Ensure npm configuration exists
         self._ensure_npm_config()
@@ -116,9 +121,9 @@ class NodeJSInstaller(BaseInstaller):
         # Install dependencies
         package_json = self.project_path / 'package.json'
         if package_json.exists():
-            print("\nInstalling project dependencies with npm...")
+            logger.progress("Installing project dependencies with npm...")
             if not self._run_npm_install():
-                print("\n⚠ Warning: npm install failed, but continuing...")
+                logger.warning("npm install failed, but continuing...")
                 return True  # Don't fail the whole process
 
         # Create .env file template if doesn't exist
@@ -133,35 +138,23 @@ class NodeJSInstaller(BaseInstaller):
 
     def _run_npm_install(self) -> bool:
         """Run npm install to download dependencies."""
-        try:
-            print("\nRunning: npm install")
-            result = subprocess.run(
-                ['npm', 'install'],
-                cwd=str(self.project_path),
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 minutes timeout
-            )
+        logger.progress("Running: npm install")
 
-            if result.returncode == 0:
-                print("\n✓ npm dependencies installed successfully")
-                return True
-            else:
-                print(f"\n✗ npm install failed with return code {result.returncode}")
-                if result.stderr:
-                    print(f"Error: {result.stderr[:500]}")  # Print first 500 chars
-                return False
-        except subprocess.TimeoutExpired:
-            print("\n✗ npm install timed out after 10 minutes")
-            return False
-        except FileNotFoundError:
-            print("\n✗ npm not found in PATH")
-            return False
-        except Exception as e:
-            print(f"\n✗ Error running npm: {e}")
-            return False
+        success, output = self.run_command(
+            ['npm', 'install'],
+            timeout=BUILD_TIMEOUT
+        )
 
-    def _ensure_npm_config(self):
+        if success:
+            logger.success("npm dependencies installed successfully")
+        else:
+            logger.error("npm install failed")
+            if output:
+                logger.debug(f"Output: {output[:500]}")
+
+        return success
+
+    def _ensure_npm_config(self) -> None:
         """Ensure npm configuration file exists."""
         npmrc_file = Path.home() / '.npmrc'
 
@@ -173,18 +166,36 @@ cache=${HOME}/.npm
 # timeout in milliseconds
 timeout=60000
 """
-            with open(npmrc_file, 'w', encoding='utf-8') as f:
-                f.write(default_config)
-            print(f"✓ Created .npmrc: {npmrc_file}")
+            try:
+                npmrc_file.write_text(default_config, encoding='utf-8')
+                logger.success(f"Created .npmrc: {npmrc_file}")
+            except IOError as e:
+                logger.warning(f"Could not create .npmrc", details=str(e))
         else:
-            print(f"✓ .npmrc already exists: {npmrc_file}")
+            logger.info(f".npmrc already exists: {npmrc_file}")
 
-    def _configure_npm_proxy(self):
+    def _configure_npm_proxy(self) -> None:
         """Configure npm proxy settings."""
         if self.proxy_manager.http_proxy:
-            subprocess.run(['npm', 'config', 'set', 'proxy', self.proxy_manager.http_proxy])
-            print(f"✓ npm http proxy configured")
+            try:
+                subprocess.run(
+                    ['npm', 'config', 'set', 'proxy', self.proxy_manager.http_proxy],
+                    check=True,
+                    capture_output=True
+                )
+                logger.success("npm http proxy configured")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to configure npm proxy", details=str(e))
+            except FileNotFoundError:
+                logger.warning("npm command not found")
 
         if self.proxy_manager.https_proxy:
-            subprocess.run(['npm', 'config', 'set', 'https-proxy', self.proxy_manager.https_proxy])
-            print(f"✓ npm https proxy configured")
+            try:
+                subprocess.run(
+                    ['npm', 'config', 'set', 'https-proxy', self.proxy_manager.https_proxy],
+                    check=True,
+                    capture_output=True
+                )
+                logger.success("npm https proxy configured")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to configure npm https proxy", details=str(e))

@@ -81,8 +81,8 @@ class TestCLIBasic(unittest.TestCase):
         """Test safe directory removal when directory doesn't exist."""
         non_existent = str(self.temp_dir / 'non_existent')
         result = self.cli.safe_rmtree(non_existent)
-        # Returns False because directory doesn't exist (nothing to remove)
-        self.assertFalse(result)
+        # Returns True because nothing to remove is considered success
+        self.assertTrue(result)
 
     @patch('shutil.rmtree')
     @patch('os.path.exists')
@@ -97,9 +97,9 @@ class TestCLIBasic(unittest.TestCase):
     @patch('shutil.rmtree')
     @patch('os.path.exists')
     def test_safe_rmtree_general_exception(self, mock_exists, mock_rmtree):
-        """Test safe directory removal with general exception."""
+        """Test safe directory removal with OSError exception."""
         mock_exists.return_value = True
-        mock_rmtree.side_effect = Exception("Unknown error")
+        mock_rmtree.side_effect = OSError("Unknown error")
 
         result = self.cli.safe_rmtree(str(self.temp_dir))
         self.assertFalse(result)
@@ -147,43 +147,33 @@ class TestCLIBasic(unittest.TestCase):
         result = self.cli.ensure_git_installed()
         self.assertFalse(result)
 
-    @patch('subprocess.run')
     @patch('click.confirm')
     @patch('click.prompt')
-    def test_ensure_git_install_success(self, mock_prompt, mock_confirm, mock_run):
+    def test_ensure_git_install_success(self, mock_prompt, mock_confirm):
         """Test Git installation success."""
-        mock_run.side_effect = [
-            FileNotFoundError(),  # is_installed check
-            Mock(returncode=1),    # _is_git_configured check
-            Mock(returncode=1),    # _is_git_configured check
-            Mock(returncode=0),    # set name
-            Mock(returncode=0),    # set email
-            Mock(returncode=0),    # set ssl
-        ]
+        from src.installers.git_installer import GitInstaller
+
         mock_confirm.side_effect = [True, True, True]  # Install, configure, SSL
         mock_prompt.side_effect = ['John Doe', 'john@example.com']
 
-        with patch.object(self.cli, 'git_installer') as mock_git:
-            mock_git.is_installed.return_value = False
-            mock_git.install.return_value = True
-            mock_git.configure.return_value = True
-            result = self.cli.ensure_git_installed()
-            self.assertTrue(result)
+        # Mock the Git installer methods
+        with patch.object(GitInstaller, 'is_installed', return_value=False):
+            with patch.object(GitInstaller, 'install', return_value=True):
+                with patch.object(GitInstaller, 'configure', return_value=True):
+                    result = self.cli.ensure_git_installed()
+                    self.assertTrue(result)
 
-    @patch('subprocess.run')
-    def test_ensure_git_not_configured(self, mock_run):
+    def test_ensure_git_not_configured(self):
         """Test Git installed but not configured."""
-        mock_run.side_effect = [
-            Mock(returncode=0, stdout='git version 2.40.0'),  # is_installed
-            Mock(returncode=0, stdout='2.40.0'),               # detect_version
-            Mock(returncode=1),                                 # _is_git_configured (name)
-            Mock(returncode=1),                                 # _is_git_configured (email)
-        ]
+        from src.installers.git_installer import GitInstaller
 
-        with patch.object(self.cli, '_configure_git') as mock_config:
-            result = self.cli.ensure_git_installed()
-            self.assertTrue(result)
-            mock_config.assert_called_once()
+        with patch.object(GitInstaller, 'is_installed', return_value=True):
+            with patch.object(GitInstaller, 'detect_version', return_value='2.40.0'):
+                with patch.object(GitInstaller, '_is_git_configured', return_value=False):
+                    with patch.object(self.cli, '_configure_git') as mock_config:
+                        result = self.cli.ensure_git_installed()
+                        self.assertTrue(result)
+                        mock_config.assert_called_once()
 
     def test_process_repository_git_not_installed(self):
         """Test processing repository when Git not installed."""

@@ -185,33 +185,23 @@ class TestGitInstaller(unittest.TestCase):
         # Verify git config command was called
         mock_run.assert_called()
 
-    @patch('src.installers.git_installer.zipfile.ZipFile')
-    @patch('pathlib.Path.unlink')
     @patch('pathlib.Path.exists')
-    def test_install_with_download_and_extract(self, mock_exists, mock_unlink, mock_zipfile):
+    def test_install_with_download_and_extract(self, mock_exists):
         """Test Git installation with download and extraction."""
         # Mock that git_dir doesn't exist initially
         mock_exists.return_value = False
 
-        with patch.object(self.installer, 'download_file', return_value=True):
+        with patch.object(self.installer, 'download_and_extract', return_value=(True, self.temp_dir / 'git')):
             with patch.object(self.installer, '_add_to_path'):
-                mock_zip = Mock()
-                mock_zipfile.return_value.__enter__.return_value = mock_zip
-
                 result = self.installer.install()
                 self.assertTrue(result)
-                mock_zip.extractall.assert_called_once()
-                mock_unlink.assert_called_once()
 
-    @patch('src.installers.git_installer.zipfile.ZipFile')
     @patch('pathlib.Path.exists')
-    def test_install_extraction_fails(self, mock_exists, mock_zipfile):
+    def test_install_extraction_fails(self, mock_exists):
         """Test Git installation when extraction fails."""
         mock_exists.return_value = False
 
-        with patch.object(self.installer, 'download_file', return_value=True):
-            mock_zipfile.side_effect = Exception("Extraction failed")
-
+        with patch.object(self.installer, 'download_and_extract', return_value=(False, None)):
             result = self.installer.install()
             self.assertFalse(result)
 
@@ -279,11 +269,11 @@ class TestGitInstaller(unittest.TestCase):
 
     @patch('subprocess.run')
     def test_detect_version_generic_exception(self, mock_run):
-        """Test detecting version with generic exception."""
+        """Test detecting version with SubprocessError exception."""
         # First call for is_installed returns success, second call raises exception
         mock_run.side_effect = [
             Mock(returncode=0),  # is_installed check
-            Exception("Unknown error")  # get version fails
+            subprocess.SubprocessError("Unknown error")  # get version fails
         ]
 
         version = self.installer.detect_version()
@@ -296,7 +286,7 @@ class TestGitInstaller(unittest.TestCase):
             Mock(returncode=1),  # name not configured
             Mock(returncode=1),  # email not configured
             Mock(returncode=0),  # set name succeeds
-            Exception("Failed to set email"),  # set email fails
+            subprocess.CalledProcessError(1, 'git'),  # set email fails
         ]
 
         result = self.installer.configure('John Doe', 'john@example.com', True)
@@ -310,7 +300,7 @@ class TestGitInstaller(unittest.TestCase):
             Mock(returncode=1),  # email not configured
             Mock(returncode=0),  # set name succeeds
             Mock(returncode=0),  # set email succeeds
-            Exception("Failed to set SSL"),  # set SSL fails
+            subprocess.CalledProcessError(1, 'git'),  # set SSL fails
         ]
 
         result = self.installer.configure('John Doe', 'john@example.com', True)
@@ -319,7 +309,7 @@ class TestGitInstaller(unittest.TestCase):
     @patch('subprocess.run')
     def test_is_git_configured_exception(self, mock_run):
         """Test _is_git_configured when exception occurs."""
-        mock_run.side_effect = Exception("Command failed")
+        mock_run.side_effect = subprocess.SubprocessError("Command failed")
 
         result = self.installer._is_git_configured()
         self.assertFalse(result)

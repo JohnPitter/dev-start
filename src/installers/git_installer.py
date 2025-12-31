@@ -1,15 +1,23 @@
 """Git installer and verifier."""
 import subprocess
-import zipfile
 from pathlib import Path
 from typing import Optional
+
 from .base import BaseInstaller
+from ..constants import (
+    DOWNLOAD_URLS,
+    DOWNLOAD_CHECKSUMS,
+    DEFAULT_VERSIONS,
+    GIT_TIMEOUT,
+    get_tools_dir,
+)
+from ..logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class GitInstaller(BaseInstaller):
     """Installer for Git."""
-
-    GIT_DOWNLOAD_URL = 'https://github.com/git-for-windows/git/releases/download/v2.43.0.windows.1/MinGit-2.43.0-64-bit.zip'
 
     def detect_version(self) -> Optional[str]:
         """Get current Git version if installed."""
@@ -19,13 +27,17 @@ class GitInstaller(BaseInstaller):
                     ['git', '--version'],
                     capture_output=True,
                     text=True,
-                    timeout=10
+                    timeout=GIT_TIMEOUT
                 )
                 if result.returncode == 0:
                     # Output format: "git version 2.43.0.windows.1"
                     return result.stdout.strip().split()[-1]
-            except Exception:
+            except subprocess.TimeoutExpired:
+                logger.warning("Git version check timed out")
+            except FileNotFoundError:
                 pass
+            except subprocess.SubprocessError as e:
+                logger.debug(f"Error getting git version: {e}")
         return None
 
     def is_installed(self) -> bool:
@@ -35,7 +47,7 @@ class GitInstaller(BaseInstaller):
                 ['git', '--version'],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=GIT_TIMEOUT
             )
             return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -43,45 +55,47 @@ class GitInstaller(BaseInstaller):
 
     def install(self) -> bool:
         """Install Git for Windows."""
-        print("Installing Git...")
+        logger.progress("Installing Git...")
 
-        tools_dir = Path.home() / '.dev-start' / 'tools'
+        tools_dir = get_tools_dir()
         git_dir = tools_dir / 'git'
+        version = DEFAULT_VERSIONS['git']
 
         if git_dir.exists():
-            print("Git directory already exists, adding to PATH...")
+            logger.info("Git directory already exists, adding to PATH...")
             self._add_to_path(git_dir)
             return True
 
-        print(f"Downloading Git from {self.GIT_DOWNLOAD_URL}...")
-        zip_path = tools_dir / 'git.zip'
+        # Get download URL and checksum
+        download_url = DOWNLOAD_URLS['git'].get(version)
+        expected_checksum = DOWNLOAD_CHECKSUMS.get('git', {}).get(version)
 
-        if not self.download_file(self.GIT_DOWNLOAD_URL, zip_path):
-            print("Failed to download Git.")
-            print("Please install Git manually from: https://git-scm.com/download/win")
+        if not download_url:
+            logger.error(f"No download URL for Git version {version}")
             return False
 
-        try:
-            print("Extracting Git...")
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(git_dir)
+        logger.progress(f"Downloading Git {version}...")
 
-            zip_path.unlink()
+        # Download and extract using base method
+        success, extracted_dir = self.download_and_extract(
+            download_url,
+            git_dir,
+            expected_checksum=expected_checksum
+        )
 
-            # Add to PATH
-            self._add_to_path(git_dir)
-
-            print("Git installed successfully!")
-            return True
-
-        except Exception as e:
-            print(f"Failed to extract Git: {e}")
+        if not success:
+            logger.error("Failed to download Git")
+            logger.info("Please install Git manually from: https://git-scm.com/download/win")
             return False
 
-    def _add_to_path(self, git_dir: Path):
+        # Add to PATH
+        self._add_to_path(git_dir)
+
+        logger.success("Git installed successfully!")
+        return True
+
+    def _add_to_path(self, git_dir: Path) -> None:
         """Add Git to system PATH."""
-        import os
-
         # Determine Git bin directory
         git_bin = git_dir / 'cmd'
         if git_bin.exists():
@@ -92,63 +106,53 @@ class GitInstaller(BaseInstaller):
 
         git_home = str(git_dir)
 
-        # Set environment variables for persistence
-        self.env_manager.set_system_path(git_path)
-        self.env_manager.append_to_env('GIT_HOME', git_home)
-
-        # Update current process environment
-        os.environ['GIT_HOME'] = git_home
-        if 'PATH' in os.environ:
-            if git_path not in os.environ['PATH']:
-                os.environ['PATH'] = f"{git_path}{os.pathsep}{os.environ['PATH']}"
-        else:
-            os.environ['PATH'] = git_path
-
-        print("✓ Git environment variables configured")
-        print(f"  GIT_HOME: {git_home}")
-        print(f"  PATH: {git_path} (added)")
+        # Use base class method to setup environment
+        self.setup_tool_environment('GIT', git_home, git_path)
 
     def configure(self, user_name: str = None, user_email: str = None, ssl_verify: bool = True) -> bool:
         """Configure Git (basic setup)."""
-        print("\nConfiguring Git...")
+        logger.progress("Configuring Git...")
 
         # Check if Git is already configured
         if self._is_git_configured():
-            print("✓ Git is already configured")
+            logger.success("Git is already configured")
             return True
 
         # If parameters not provided, prompt user
         if not user_name or not user_email:
-            print("\n⚙ Git needs to be configured with your information")
-            print("This is required for committing code to repositories")
+            logger.info("Git needs to be configured with your information")
+            logger.info("This is required for committing code to repositories")
             return False  # Return False to indicate configuration is needed
 
         # Configure user name
         try:
             subprocess.run(['git', 'config', '--global', 'user.name', user_name], check=True)
-            print(f"✓ Git user name set to: {user_name}")
-        except Exception as e:
-            print(f"✗ Failed to set Git user name: {e}")
+            logger.success(f"Git user name set to: {user_name}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to set Git user name", details=str(e))
+            return False
+        except FileNotFoundError:
+            logger.error("Git command not found")
             return False
 
         # Configure user email
         try:
             subprocess.run(['git', 'config', '--global', 'user.email', user_email], check=True)
-            print(f"✓ Git user email set to: {user_email}")
-        except Exception as e:
-            print(f"✗ Failed to set Git user email: {e}")
+            logger.success(f"Git user email set to: {user_email}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to set Git user email", details=str(e))
             return False
 
         # Configure SSL verification
         try:
             ssl_value = 'true' if ssl_verify else 'false'
             subprocess.run(['git', 'config', '--global', 'http.sslVerify', ssl_value], check=True)
-            print(f"✓ Git SSL verification set to: {ssl_value}")
-        except Exception as e:
-            print(f"✗ Failed to set Git SSL verification: {e}")
+            logger.success(f"Git SSL verification set to: {ssl_value}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to set Git SSL verification", details=str(e))
             return False
 
-        print("✓ Git configuration completed successfully")
+        logger.success("Git configuration completed successfully")
         return True
 
     def _is_git_configured(self) -> bool:
@@ -164,6 +168,9 @@ class GitInstaller(BaseInstaller):
                 capture_output=True,
                 text=True
             )
-            return name_result.returncode == 0 and email_result.returncode == 0
-        except Exception:
+            return (name_result.returncode == 0 and
+                    email_result.returncode == 0 and
+                    name_result.stdout.strip() and
+                    email_result.stdout.strip())
+        except (FileNotFoundError, subprocess.SubprocessError):
             return False

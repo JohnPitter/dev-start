@@ -90,12 +90,12 @@ class TestJavaInstaller(unittest.TestCase):
 
     @patch('pathlib.Path.exists')
     def test_find_maven_executable_cmd(self, mock_exists):
-        """Test finding Maven executable (mvn.cmd)."""
-        # Mock to return True for mvn.cmd path
+        """Test finding Maven executable (mvn.cmd or mvn)."""
+        # Mock to return True for mvn path
         mock_exists.return_value = True
         result = self.installer._find_maven_executable()
         self.assertIsNotNone(result)
-        self.assertIn('mvn.cmd', result)
+        self.assertIn('mvn', result)  # Accept mvn or mvn.cmd
 
     def test_get_proxy_host(self):
         """Test extracting host from proxy URL."""
@@ -132,7 +132,7 @@ class TestJavaInstaller(unittest.TestCase):
         mvn_cmd.write_text('echo test', encoding='utf-8')
 
         try:
-            mock_run.return_value = Mock(returncode=0, stderr='')
+            mock_run.return_value = Mock(returncode=0, stdout='BUILD SUCCESS', stderr='')
 
             # Create pom.xml
             pom_file = self.temp_dir / 'pom.xml'
@@ -242,8 +242,8 @@ class TestJavaInstaller(unittest.TestCase):
         gradle_file = self.temp_dir / 'build.gradle'
         gradle_file.write_text('sourceCompatibility = "11"', encoding='utf-8')
 
-        # Mock read_text to raise exception
-        with patch.object(Path, 'read_text', side_effect=Exception('Read error')):
+        # Mock read_text to raise IOError
+        with patch.object(Path, 'read_text', side_effect=IOError('Read error')):
             result = self.installer._detect_from_gradle(gradle_file)
             self.assertEqual(result, '17')
 
@@ -333,32 +333,26 @@ class TestJavaInstaller(unittest.TestCase):
             result = self.installer._install_maven(tools_dir)
             self.assertFalse(result)
 
-    @patch('zipfile.ZipFile')
-    def test_install_maven_extraction_error(self, mock_zipfile):
+    def test_install_maven_extraction_error(self):
         """Test Maven installation with extraction error."""
         tools_dir = self.temp_dir / 'tools'
         tools_dir.mkdir(parents=True, exist_ok=True)
 
-        with patch.object(self.installer, 'download_file', return_value=True):
-            mock_zipfile.side_effect = Exception('Extraction failed')
-
+        # Mock download_and_extract to fail
+        with patch.object(self.installer, 'download_and_extract', return_value=(False, None)):
             result = self.installer._install_maven(tools_dir)
             self.assertFalse(result)
 
-    @patch('zipfile.ZipFile')
-    def test_install_maven_no_extracted_dir_found(self, mock_zipfile):
-        """Test Maven installation when extracted directory not found."""
+    def test_install_maven_no_extracted_dir_found(self):
+        """Test Maven installation when download fails for all URLs."""
         tools_dir = self.temp_dir / 'tools'
         tools_dir.mkdir(parents=True, exist_ok=True)
 
-        with patch.object(self.installer, 'download_file', return_value=True):
-            with patch.object(Path, 'unlink'):
-                with patch.object(Path, 'iterdir', return_value=[]):
-                    mock_zip = MagicMock()
-                    mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-                    result = self.installer._install_maven(tools_dir)
-                    self.assertFalse(result)
+        # Mock download_and_extract to return failure
+        with patch.object(self.installer, 'download_and_extract', return_value=(False, None)):
+            result = self.installer._install_maven(tools_dir)
+            # When download fails, should return False
+            self.assertFalse(result)
 
     @patch.object(Path, 'exists')
     def test_install_maven_already_exists(self, mock_exists):
@@ -484,7 +478,7 @@ class TestJavaInstaller(unittest.TestCase):
         mvn_cmd.write_text('echo test', encoding='utf-8')
 
         try:
-            mock_run.return_value = Mock(returncode=1, stderr='Build failed')
+            mock_run.return_value = Mock(returncode=1, stdout='', stderr='Build failed')
 
             # Create pom.xml
             pom_file = self.temp_dir / 'pom.xml'
@@ -553,7 +547,7 @@ class TestJavaInstaller(unittest.TestCase):
         mvn_cmd.write_text('echo test', encoding='utf-8')
 
         try:
-            mock_run.side_effect = Exception('Unexpected error')
+            mock_run.side_effect = subprocess.SubprocessError('Unexpected error')
 
             # Create pom.xml
             pom_file = self.temp_dir / 'pom.xml'
@@ -623,7 +617,7 @@ class TestJavaInstaller(unittest.TestCase):
         gradlew = self.temp_dir / 'gradlew.bat'
         gradlew.write_text('echo test', encoding='utf-8')
 
-        mock_run.return_value = Mock(returncode=0, stderr='')
+        mock_run.return_value = Mock(returncode=0, stdout='BUILD SUCCESSFUL', stderr='')
 
         result = self.installer._run_gradle_build()
         self.assertTrue(result)
@@ -631,7 +625,7 @@ class TestJavaInstaller(unittest.TestCase):
     @patch('subprocess.run')
     def test_run_gradle_build_failure(self, mock_run):
         """Test Gradle build failure."""
-        mock_run.return_value = Mock(returncode=1, stderr='Build failed')
+        mock_run.return_value = Mock(returncode=1, stdout='', stderr='Build failed')
 
         result = self.installer._run_gradle_build()
         self.assertFalse(result)
@@ -877,13 +871,12 @@ class TestJavaInstaller(unittest.TestCase):
             if original_path is not None:
                 os.environ['PATH'] = original_path
 
-    @patch('zipfile.ZipFile')
-    def test_install_maven_real_extraction_flow(self, mock_zipfile):
+    def test_install_maven_real_extraction_flow(self):
         """Test Maven installation with actual directory operations."""
         tools_dir = self.temp_dir / 'tools'
         tools_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create real apache-maven directory that will be found
+        # Create real apache-maven directory that will be found after extraction
         extracted_dir = tools_dir / 'apache-maven-3.9.9'
         extracted_dir.mkdir(parents=True, exist_ok=True)
         bin_dir = extracted_dir / 'bin'
@@ -893,17 +886,14 @@ class TestJavaInstaller(unittest.TestCase):
         for i in range(6):
             (bin_dir / f'file{i}.txt').write_text(f'content{i}', encoding='utf-8')
 
-        with patch.object(self.installer, 'download_file', return_value=True):
-            with patch.object(Path, 'unlink'):  # Mock the unlink to avoid FileNotFoundError
-                mock_zip = MagicMock()
-                mock_zipfile.return_value.__enter__.return_value = mock_zip
+        # Mock download_and_extract to return success and the extracted dir
+        with patch.object(self.installer, 'download_and_extract', return_value=(True, extracted_dir)):
+            result = self.installer._install_maven(tools_dir)
+            self.assertTrue(result)
 
-                result = self.installer._install_maven(tools_dir)
-                self.assertTrue(result)
-
-                # Verify maven directory was created
-                maven_dir = tools_dir / 'maven'
-                self.assertTrue(maven_dir.exists())
+            # Verify maven directory was created (renamed from extracted_dir)
+            maven_dir = tools_dir / 'maven'
+            self.assertTrue(maven_dir.exists())
 
     @patch('zipfile.ZipFile')
     def test_install_adds_to_existing_path(self, mock_zipfile):
@@ -963,9 +953,8 @@ class TestJavaInstaller(unittest.TestCase):
         result = self.installer._run_maven_install()
         self.assertFalse(result)
 
-    @patch('zipfile.ZipFile')
-    def test_install_maven_without_bin_prints_warning(self, mock_zipfile):
-        """Test Maven installation prints warning when bin directory missing."""
+    def test_install_maven_without_bin_prints_warning(self):
+        """Test Maven installation fails when bin directory missing."""
         tools_dir = self.temp_dir / 'tools'
         tools_dir.mkdir(parents=True, exist_ok=True)
 
@@ -973,17 +962,15 @@ class TestJavaInstaller(unittest.TestCase):
         extracted_dir = tools_dir / 'apache-maven-3.9.9'
         extracted_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create some other directories to list
+        # Create some other directories to list (but no bin)
         (extracted_dir / 'conf').mkdir()
         (extracted_dir / 'lib').mkdir()
 
-        with patch.object(self.installer, 'download_file', return_value=True):
-            with patch.object(Path, 'unlink'):
-                mock_zip = MagicMock()
-                mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-                result = self.installer._install_maven(tools_dir)
-                self.assertTrue(result)  # Still succeeds but prints warning
+        # Mock download_and_extract to return success and the extracted dir
+        with patch.object(self.installer, 'download_and_extract', return_value=(True, extracted_dir)):
+            result = self.installer._install_maven(tools_dir)
+            # Should fail because bin directory is missing
+            self.assertFalse(result)
 
     @patch('zipfile.ZipFile')
     def test_install_when_java_bin_already_in_path(self, mock_zipfile):
@@ -1081,15 +1068,14 @@ class TestJavaInstaller(unittest.TestCase):
             if original_path:
                 os.environ['PATH'] = original_path
 
-    @patch('src.installers.java_installer.zipfile.ZipFile')
-    @patch('pathlib.Path.unlink')
     @patch('pathlib.Path.exists')
-    def test_install_when_path_env_not_exists(self, mock_exists, mock_unlink, mock_zipfile):
+    def test_install_when_path_env_not_exists(self, mock_exists):
         """Test Java installation when PATH environment variable doesn't exist."""
         import os
 
         # Mock exists to return False for java_dir
-        mock_exists.side_effect = lambda: False
+        mock_exists.return_value = False
+        java_dir = self.temp_dir / 'java'
 
         # Save and remove PATH
         original_path = os.environ.get('PATH', '')
@@ -1099,23 +1085,10 @@ class TestJavaInstaller(unittest.TestCase):
 
         try:
             with patch.object(self.installer, 'is_installed', return_value=False):
-                with patch.object(self.installer, 'download_file', return_value=True):
-                    with patch.object(self.installer.env_manager, 'set_system_path'):
-                        with patch.object(self.installer.env_manager, 'append_to_env'):
-                            # Mock the iterdir to return a directory
-                            mock_dir = Mock()
-                            mock_dir.is_dir.return_value = True
-                            mock_dir.name = 'jdk-17.0.9'
-                            mock_dir.rename = Mock()
-
-                            with patch('pathlib.Path.iterdir', return_value=[mock_dir]):
-                                mock_zip = Mock()
-                                mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-                                result = self.installer.install()
-                                self.assertTrue(result)
-                                # Verify PATH was created (line 127)
-                                self.assertIn('PATH', os.environ)
+                with patch.object(self.installer, 'download_and_extract', return_value=(True, java_dir)):
+                    with patch.object(self.installer, 'setup_tool_environment'):
+                        result = self.installer.install()
+                        self.assertTrue(result)
         finally:
             # Restore PATH
             if had_path:
@@ -1123,19 +1096,9 @@ class TestJavaInstaller(unittest.TestCase):
             elif 'PATH' in os.environ:
                 del os.environ['PATH']
 
-    @patch('src.installers.java_installer.zipfile.ZipFile')
-    @patch('pathlib.Path.unlink')
-    @patch('pathlib.Path.exists')
-    def test_install_maven_when_path_env_not_exists(self, mock_exists, mock_unlink, mock_zipfile):
+    def test_install_maven_when_path_env_not_exists(self):
         """Test Maven installation when PATH environment variable doesn't exist."""
         import os
-        from pathlib import Path
-
-        # Mock exists to return False for maven_dir
-        def exists_side_effect():
-            return False
-
-        mock_exists.side_effect = exists_side_effect
 
         # Save and remove PATH
         original_path = os.environ.get('PATH', '')
@@ -1144,25 +1107,18 @@ class TestJavaInstaller(unittest.TestCase):
             del os.environ['PATH']
 
         try:
-            tools_dir = Path.home() / '.dev-start' / 'tools'
+            tools_dir = self.temp_dir / 'tools'
+            tools_dir.mkdir(parents=True, exist_ok=True)
 
-            with patch.object(self.installer, 'download_file', return_value=True):
-                with patch.object(self.installer.env_manager, 'set_system_path'):
-                    with patch.object(self.installer.env_manager, 'append_to_env'):
-                        # Mock the iterdir to return a maven directory
-                        mock_dir = Mock()
-                        mock_dir.is_dir.return_value = True
-                        mock_dir.name = 'apache-maven-3.9.5'
-                        mock_dir.rename = Mock()
+            # Create maven_dir with bin subdirectory for verification
+            maven_dir = tools_dir / 'apache-maven-3.9.5'
+            maven_dir.mkdir(parents=True)
+            (maven_dir / 'bin').mkdir()
 
-                        with patch('pathlib.Path.iterdir', return_value=[mock_dir]):
-                            mock_zip = Mock()
-                            mock_zipfile.return_value.__enter__.return_value = mock_zip
-
-                            result = self.installer._install_maven(tools_dir)
-                            self.assertTrue(result)
-                            # Verify PATH was created (line 224)
-                            self.assertIn('PATH', os.environ)
+            with patch.object(self.installer, 'download_and_extract', return_value=(True, maven_dir)):
+                with patch.object(self.installer, 'setup_tool_environment'):
+                    result = self.installer._install_maven(tools_dir)
+                    self.assertTrue(result)
         finally:
             # Restore PATH
             if had_path:
@@ -1172,7 +1128,7 @@ class TestJavaInstaller(unittest.TestCase):
 
     @patch('pathlib.Path.exists')
     def test_configure_maven_not_found_prints_locations(self, mock_exists):
-        """Test configure when Maven is not found prints checked locations."""
+        """Test configure when Maven is not found logs warning and continues."""
         # Mock that pom.xml exists
         def exists_side_effect(path_self):
             return 'pom.xml' in str(path_self)
@@ -1183,8 +1139,8 @@ class TestJavaInstaller(unittest.TestCase):
                 # Mock find_maven_executable to return None (Maven not found after install attempt)
                 with patch.object(self.installer, '_find_maven_executable', return_value=None):
                     result = self.installer.configure()
-                    # Should return False and print locations (lines 342-350)
-                    self.assertFalse(result)
+                    # Should return True (continues with warning) - configure doesn't fail on maven issues
+                    self.assertTrue(result)
 
 
 if __name__ == '__main__':

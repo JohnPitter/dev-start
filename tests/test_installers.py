@@ -192,10 +192,11 @@ class TestBaseInstaller(unittest.TestCase):
         self.test_installer.install()
         self.test_installer.configure()
 
-    @patch('requests.get')
+    @patch('src.installers.base.requests.get')
     def test_download_file_success(self, mock_get):
         """Test successful file download."""
         mock_response = Mock()
+        mock_response.headers = {'content-length': '100'}
         mock_response.iter_content.return_value = [b'test data']
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -206,12 +207,13 @@ class TestBaseInstaller(unittest.TestCase):
         self.assertTrue(result)
         self.assertTrue(destination.exists())
 
-    @patch('requests.get')
+    @patch('src.installers.base.requests.get')
     def test_download_file_with_proxy(self, mock_get):
         """Test file download with proxy."""
         self.proxy_manager.set_proxy(http_proxy='http://proxy:8080')
 
         mock_response = Mock()
+        mock_response.headers = {'content-length': '100'}
         mock_response.iter_content.return_value = [b'data']
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -224,10 +226,11 @@ class TestBaseInstaller(unittest.TestCase):
         call_kwargs = mock_get.call_args[1]
         self.assertIn('proxies', call_kwargs)
 
-    @patch('requests.get')
+    @patch('src.installers.base.requests.get')
     def test_download_file_failure(self, mock_get):
         """Test handling of download failure."""
-        mock_get.side_effect = Exception('Network error')
+        import requests.exceptions
+        mock_get.side_effect = requests.exceptions.RequestException('Network error')
 
         destination = self.temp_dir / 'test.zip'
         result = self.installer.download_file('http://example.com/file.zip', destination)
@@ -317,7 +320,8 @@ class TestBaseInstaller(unittest.TestCase):
     @patch('subprocess.run')
     def test_run_command_exception(self, mock_run):
         """Test command execution when exception occurs."""
-        mock_run.side_effect = Exception('Command failed')
+        import subprocess
+        mock_run.side_effect = subprocess.SubprocessError('Command failed')
 
         success, output = self.installer.run_command(['test'])
 

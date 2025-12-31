@@ -118,7 +118,7 @@ class InstallationReport:
             for url in self.successful:
                 tech = self.technologies_detected.get(url, 'Unknown')
                 tech_str = tech.value if hasattr(tech, 'value') else str(tech)
-                lines.append(f"  ✓ {url}")
+                lines.append(f"  [OK] {url}")
                 lines.append(f"    Technology: {tech_str}")
             lines.append("")
 
@@ -127,7 +127,7 @@ class InstallationReport:
             lines.append("-" * 70)
             for repo in self.repositories:
                 if not repo['success']:
-                    lines.append(f"  ✗ {repo['url']}")
+                    lines.append(f"  [ERROR] {repo['url']}")
                     if repo['error']:
                         lines.append(f"    Error: {repo['error']}")
             lines.append("")
@@ -421,7 +421,7 @@ class DevStartGUI:
             self.http_proxy_entry.grid(row=3, column=1, pady=5, sticky=tk.W)
             self.https_proxy_label.grid(row=4, column=0, sticky=tk.W, pady=5)
             self.https_proxy_entry.grid(row=4, column=1, pady=5, sticky=tk.W)
-            self.proxy_button.config(text="✓ Ocultar Proxy")
+            self.proxy_button.config(text="[OK] Ocultar Proxy")
             self.proxy_visible = True
 
     def remove_readonly(self, func, path, excinfo):
@@ -436,20 +436,20 @@ class DevStartGUI:
                 if os.path.exists(path):
                     # First attempt: standard removal with error handler
                     shutil.rmtree(path, onerror=self.remove_readonly)
-                    print(f"✓ Removed existing directory: {path}")
+                    print(f"[OK] Removed existing directory: {path}")
                     return True
             except PermissionError as e:
                 if attempt < max_retries - 1:
-                    print(f"⚠ Attempt {attempt + 1}/{max_retries}: Directory is locked, retrying in 1s...")
+                    print(f"[WARN] Attempt {attempt + 1}/{max_retries}: Directory is locked, retrying in 1s...")
                     time.sleep(1)
                 else:
-                    print(f"✗ Failed to remove directory after {max_retries} attempts")
+                    print(f"[ERROR] Failed to remove directory after {max_retries} attempts")
                     print(f"  Error: {e}")
                     print(f"  Please close any programs using files in: {path}")
                     print(f"  Then manually delete the directory and try again")
                     return False
             except Exception as e:
-                print(f"✗ Error removing directory: {e}")
+                print(f"[ERROR] Error removing directory: {e}")
                 return False
         return False
 
@@ -496,7 +496,7 @@ class DevStartGUI:
 
             if http_proxy and http_proxy != "http://proxy.example.com:8080":
                 self.proxy_manager.set_proxy(http_proxy=http_proxy, https_proxy=https_proxy)
-                print(f"✓ Proxy configured: {http_proxy}")
+                print(f"[OK] Proxy configured: {http_proxy}")
 
             # Check Git
             print("\n" + "=" * 60)
@@ -505,9 +505,9 @@ class DevStartGUI:
 
             git_installer = GitInstaller(self.base_dir, self.proxy_manager)
             if not git_installer.is_installed():
-                print("⚠ Git not installed. Installing...")
+                print("[WARN] Git not installed. Installing...")
                 if git_installer.install():
-                    print("✓ Git installed successfully")
+                    print("[OK] Git installed successfully")
                     self.report.git_installed = True
 
                     # Configure Git - prompt user for details
@@ -519,18 +519,18 @@ class DevStartGUI:
                             ssl_verify=git_config['ssl_verify']
                         )
                     else:
-                        print("⚠ Git configuration skipped")
+                        print("[WARN] Git configuration skipped")
                 else:
-                    print("✗ Failed to install Git")
+                    print("[ERROR] Failed to install Git")
                     messagebox.showerror("Error", "Failed to install Git")
                     return
             else:
                 version = git_installer.detect_version()
-                print(f"✓ Git is installed (version {version})")
+                print(f"[OK] Git is installed (version {version})")
 
                 # Check if Git needs configuration
                 if not git_installer._is_git_configured():
-                    print("⚠ Git is not configured")
+                    print("[WARN] Git is not configured")
                     git_config = self._prompt_git_config()
                     if git_config:
                         git_installer.configure(
@@ -551,16 +551,16 @@ class DevStartGUI:
                     repo_path = self.base_dir / repo_name
 
                     if repo_path.exists():
-                        print(f"⚠ Repository already exists: {repo_path}")
+                        print(f"[WARN] Repository already exists: {repo_path}")
                         if not self.safe_rmtree(str(repo_path)):
                             error = "Failed to remove existing repository (directory may be locked)"
-                            print(f"✗ {error}")
+                            print(f"[ERROR] {error}")
                             self.report.add_repository(repo_url, False, error=error)
                             continue
 
                     if not self.repo_manager.clone_repository(repo_url, repo_path):
                         error = "Failed to clone repository"
-                        print(f"✗ {error}")
+                        print(f"[ERROR] {error}")
                         self.report.add_repository(repo_url, False, error=error)
                         continue
 
@@ -570,17 +570,17 @@ class DevStartGUI:
 
                     if technology == Technology.UNKNOWN:
                         error = "Could not detect project technology"
-                        print(f"✗ {error}")
+                        print(f"[ERROR] {error}")
                         self.report.add_repository(repo_url, False, error=error)
                         continue
 
-                    print(f"✓ Detected: {technology.value}")
+                    print(f"[OK] Detected: {technology.value}")
 
                     # Install and configure
                     installer = self._get_installer(technology, repo_path)
                     if not installer:
                         error = f"No installer available for {technology.value}"
-                        print(f"✗ {error}")
+                        print(f"[ERROR] {error}")
                         self.report.add_repository(repo_url, False, error=error)
                         continue
 
@@ -588,27 +588,27 @@ class DevStartGUI:
                         print(f"\nInstalling {technology.value}...")
                         if not installer.install():
                             error = "Installation failed"
-                            print(f"✗ {error}")
+                            print(f"[ERROR] {error}")
                             self.report.add_repository(repo_url, False, technology=technology, error=error)
                             continue
-                        print(f"✓ Installation completed")
+                        print(f"[OK] Installation completed")
                     else:
-                        print(f"✓ {technology.value} is already installed")
+                        print(f"[OK] {technology.value} is already installed")
 
                     print("\nConfiguring project...")
                     if not installer.configure():
                         error = "Configuration failed"
-                        print(f"✗ {error}")
+                        print(f"[ERROR] {error}")
                         self.report.add_repository(repo_url, False, technology=technology, error=error)
                         continue
 
-                    print("✓ Configuration completed")
-                    print(f"\n✓ Project ready at: {repo_path}")
+                    print("[OK] Configuration completed")
+                    print(f"\n[OK] Project ready at: {repo_path}")
                     self.report.add_repository(repo_url, True, technology=technology)
 
                 except Exception as e:
                     error = str(e)
-                    print(f"✗ Error processing {repo_url}: {error}")
+                    print(f"[ERROR] Error processing {repo_url}: {error}")
                     self.report.add_repository(repo_url, False, error=error)
 
             # Finish
