@@ -18,9 +18,30 @@ class TestJavaInstaller(unittest.TestCase):
         self.temp_dir = Path(tempfile.mkdtemp())
         self.proxy_manager = ProxyManager()
         self.installer = JavaInstaller(self.temp_dir, self.proxy_manager)
+        # Save original environment
+        import os
+        self.original_env = os.environ.copy()
+        # Mock set_system_path to prevent modifying system PATH during tests
+        self.set_system_path_patcher = patch.object(
+            self.installer.env_manager, 'set_system_path'
+        )
+        self.mock_set_system_path = self.set_system_path_patcher.start()
+        # Mock append_to_env to prevent modifying system environment during tests
+        self.append_to_env_patcher = patch.object(
+            self.installer.env_manager, 'append_to_env'
+        )
+        self.mock_append_to_env = self.append_to_env_patcher.start()
 
     def tearDown(self):
         """Clean up test fixtures."""
+        # Stop patchers
+        self.set_system_path_patcher.stop()
+        self.append_to_env_patcher.stop()
+        # Restore original environment
+        import os
+        os.environ.clear()
+        os.environ.update(self.original_env)
+        # Clean up temp directory
         if self.temp_dir.exists():
             shutil.rmtree(self.temp_dir)
 
