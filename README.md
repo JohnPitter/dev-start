@@ -1,154 +1,139 @@
-# dev-start
+<div align="center">
 
-Um configurador de tecnologias para desenvolvedores.
+![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-329-success?style=for-the-badge)
 
-## Descrição
+**Configurador de Tecnologias para Desenvolvedores**
 
-dev-start é uma ferramenta que automatiza a configuração de ambientes de desenvolvimento. A aplicação:
+*Automatize a configuracao de ambientes de desenvolvimento*
 
-- **Verifica e instala o Git** se não estiver presente no sistema
-- Clona repositórios Git
-- Detecta automaticamente a tecnologia usada (Java/SpringBoot, Python, Node.js)
-- Instala e configura tudo necessário para o projeto rodar
-- Suporta configuração de proxy para ambientes corporativos
-- Cria arquivos de ambiente (.env) e configurações
+[Overview](#overview) •
+[Funcionalidades](#funcionalidades) •
+[Instalacao](#instalacao) •
+[Uso](#uso) •
+[Tecnologias](#tecnologias-suportadas) •
+[Testes](#testes) •
+[Documentacao](#documentacao)
 
-## Tecnologias Suportadas
+</div>
 
-- **Java/SpringBoot** - Projetos Maven e Gradle
-- **Python** - Projetos com requirements.txt, setup.py, pyproject.toml
-- **Node.js** - Projetos com package.json
+---
 
-## Instalação
+## Overview
 
-### Pré-requisitos
+dev-start e uma ferramenta que automatiza a configuracao de ambientes de desenvolvimento. A aplicacao verifica e instala dependencias, clona repositorios Git, detecta automaticamente a tecnologia usada e configura tudo o necessario para o projeto funcionar.
 
-- Python 3.8 ou superior
-- Git (será instalado automaticamente se não estiver presente)
+**O que voce obtem:**
+- Deteccao automatica de tecnologia (Java, Python, Node.js)
+- Instalacao e configuracao completa do ambiente
+- Interface grafica moderna e intuitiva
+- Suporte a proxy para ambientes corporativos
+- Criacao automatica de arquivos de ambiente (.env)
+- Verificacao e instalacao automatica do Git
 
-### Instalação de Dependências
-
-```bash
-pip install -r requirements.txt
-```
-
-## Uso
-
-### Interface Gráfica (GUI)
-
-```bash
-# Iniciar interface gráfica
-python gui.py
-```
-
-**🎨 Interface Moderna e Intuitiva**
-
-A GUI oferece:
-- **Design profissional**: Interface limpa e moderna
-- **Header customizado**: Identidade visual da aplicação
-- **Interface intuitiva** para configuração em português
-- **Visualização de logs** em tempo real com código de cores
-- **Geração e exportação** de relatórios de instalação
-- **Configuração de proxy** visual
-- **Indicador de progresso** animado
-- **Botões customizados** com cores destacadas
-
-### Linha de Comando
-
-```bash
-python -m src.cli <repository-urls>
-```
-
-### Exemplos
-
-**Configurar um único repositório:**
-```bash
-python -m src.cli https://github.com/user/my-project
-```
-
-**Configurar múltiplos repositórios:**
-```bash
-python -m src.cli https://github.com/user/project1 https://github.com/user/project2
-```
-
-**Configurar com proxy (ambiente corporativo):**
-```bash
-python -m src.cli --http-proxy http://proxy.company.com:8080 --https-proxy http://proxy.company.com:8080 https://github.com/user/project
-```
-
-## Gerando Executável Windows
-
-Para criar um executável Windows:
-
-```bash
-# Opção 1: Usar o script build.bat
-build.bat
-
-# Opção 2: Manualmente
-pip install -r requirements.txt
-pyinstaller dev-start.spec --clean
-```
-
-O executável será criado em `dist/dev-start.exe`
-
-### Usando o Executável
-
-```bash
-dev-start.exe https://github.com/user/project
-
-# Com proxy
-dev-start.exe --http-proxy http://proxy:8080 --https-proxy http://proxy:8080 https://github.com/user/project
-```
-
-## Estrutura do Projeto
-
-```
-dev-start/
-├── src/
-│   ├── cli.py              # Interface de linha de comando
-│   ├── detector.py         # Detector de tecnologias
-│   ├── env_manager.py      # Gerenciador de variáveis de ambiente
-│   ├── proxy_manager.py    # Gerenciador de proxy
-│   ├── repo_manager.py     # Gerenciador de repositórios
-│   └── installers/         # Instaladores por tecnologia
-│       ├── base.py
-│       ├── java_installer.py
-│       ├── python_installer.py
-│       └── nodejs_installer.py
-├── tests/                  # Testes unitários
-├── requirements.txt        # Dependências
-└── dev-start.spec         # Configuração PyInstaller
-```
+---
 
 ## Funcionalidades
 
-### Detecção Automática
-- Analisa arquivos do repositório para identificar a tecnologia
-- Suporta múltiplos indicadores por tecnologia
+| Funcionalidade | Descricao |
+|----------------|-----------|
+| **Deteccao Automatica** | Analisa arquivos do repositorio para identificar a tecnologia |
+| **Instalacao Completa** | Baixa e configura JDK, Maven, virtualenv, Node.js |
+| **Configuracao de Proxy** | Suporte a ambientes corporativos com proxy HTTP/HTTPS |
+| **Interface Grafica** | GUI moderna com visualizacao de logs em tempo real |
+| **Linha de Comando** | CLI para automacao e uso em scripts |
+| **Multiplos Repositorios** | Configure varios projetos de uma vez |
+| **Relatorios** | Geracao e exportacao de relatorios de instalacao |
+| **Arquivos .env** | Criacao automatica de arquivos de ambiente |
 
-### Instalação
-- Java: Baixa e configura JDK e Maven
-- Python: Cria virtualenv e instala dependências
-- Node.js: Baixa Node.js e instala pacotes npm
+---
 
-### Configuração
-- Cria arquivos de configuração padrão
-- Define variáveis de ambiente
-- Configura proxy quando necessário
+## Instalacao
+
+### Requisitos
+
+| Requisito | Versao |
+|-----------|--------|
+| Python | 3.8+ |
+| Git | Qualquer (instalado automaticamente se ausente) |
+
+### Inicio Rapido
+
+```bash
+# Clone o repositorio
+git clone https://github.com/JohnPitter/dev-start.git
+cd dev-start
+
+# Instale as dependencias
+pip install -r requirements.txt
+```
+
+---
+
+## Uso
+
+### Interface Grafica (GUI)
+
+```bash
+python gui.py
+```
+
+A GUI oferece:
+- Design profissional com identidade visual da aplicacao
+- Interface intuitiva para configuracao em portugues
+- Visualizacao de logs em tempo real com codigo de cores
+- Geracao e exportacao de relatorios de instalacao
+- Configuracao de proxy visual
+- Indicador de progresso animado
+
+### Linha de Comando (CLI)
+
+```bash
+# Configurar um unico repositorio
+python -m src.cli https://github.com/user/my-project
+
+# Configurar multiplos repositorios
+python -m src.cli https://github.com/user/project1 https://github.com/user/project2
+
+# Configurar com proxy (ambiente corporativo)
+python -m src.cli --http-proxy http://proxy.company.com:8080 --https-proxy http://proxy.company.com:8080 https://github.com/user/project
+```
+
+Para exemplos detalhados, consulte [docs/USAGE.md](docs/USAGE.md).
+
+---
+
+## Tecnologias Suportadas
+
+| Tecnologia | Deteccao | Instalacao |
+|------------|----------|------------|
+| **Java/SpringBoot** | Maven (pom.xml), Gradle (build.gradle) | JDK + Maven/Gradle |
+| **Python** | requirements.txt, setup.py, pyproject.toml | virtualenv + dependencias |
+| **Node.js** | package.json | Node.js + npm install |
+
+---
 
 ## Testes
 
-A aplicação possui **329 testes automatizados** cobrindo todas as funcionalidades:
+A aplicacao possui **329 testes automatizados** com cobertura de **96.54%**.
 
-### Executar todos os testes com pytest
+| Categoria | Quantidade | Descricao |
+|-----------|------------|-----------|
+| **Unitarios** | 234 | Detector, Proxy, Ambiente, Repositorios, Instaladores, CLI |
+| **E2E** | 5 | Clonagem real, deteccao em projetos reais, setup completo |
+| **Performance** | 6 | Velocidade de deteccao, criacao de arquivos, eficiencia de memoria |
+| **GUI** | 56 | Componentes, widgets, integracao, inicializacao |
+| **Instaladores** | 28 | Git Installer, instaladores base |
+
 ```bash
 # Todos os testes com cobertura
 pytest tests/ -v --cov=src --cov-report=html
 
-# Apenas testes unitários e integração
+# Apenas testes unitarios e integracao
 pytest tests/ -v -m "not e2e and not performance"
 
-# Apenas testes E2E (com repositórios reais)
+# Apenas testes E2E
 pytest tests/test_e2e.py -v -m e2e
 
 # Apenas testes de performance
@@ -158,83 +143,68 @@ pytest tests/test_performance.py -v -m performance
 pytest tests/test_gui.py -v -m gui
 ```
 
-### Executar com unittest (legacy)
-```bash
-# Testar detector de tecnologias
-python -m unittest tests.test_detector
+Para documentacao completa de testes, consulte [docs/TESTING.md](docs/TESTING.md).
 
-# Testar gerenciador de proxy
-python -m unittest tests.test_proxy_manager
+---
 
-# Outros módulos...
-python -m unittest tests.test_env_manager
-python -m unittest tests.test_installers
-python -m unittest tests.test_repo_manager
-python -m unittest tests.test_integration
-```
-
-### Cobertura de Testes
-
-#### Testes Unitários (234 testes)
-- **Detector de Tecnologias** - 19 testes
-- **Gerenciador de Proxy** - 6 testes
-- **Gerenciador de Ambiente** - 14 testes
-- **Gerenciador de Repositórios** - 6 testes
-- **Testes de Integração** - 7 testes
-- **Instaladores Base** - 24 testes
-- **CLI Básico** - 31 testes
-- **Git Installer** - 26 testes
-- **Java Installer** - 78 testes
-- **Python Installer** - 27 testes
-- **Node.js Installer** - 24 testes
-
-#### Testes E2E (5 testes)
-- Clonagem de repositórios reais do GitHub
-- Detecção de tecnologias em projetos reais
-- Setup completo de ambiente
-
-#### Testes de Performance (6 testes)
-- Velocidade de detecção de tecnologia (<10ms)
-- Criação de arquivos .env (<5ms)
-- Configuração de proxy (<1ms)
-- Criação de diretórios (<2ms)
-- Detecção de padrões (<0.5ms)
-- Eficiência de memória com arquivos grandes
-
-#### Testes de GUI (56 testes)
-- Componentes de relatório (6 testes)
-- Redirecionamento de logs (3 testes)
-- Widgets e interface (27 testes)
-- Integração e instalação completa (14 testes)
-- Main e inicialização (6 testes)
-
-#### Testes de Instaladores Específicos (28 testes)
-- Git Installer - 26 testes
-- Instaladores base - 24 testes
-
-**Total: 329 testes**
-
-### Relatório de Cobertura
+## Gerando Executavel
 
 ```bash
-# Gerar relatório HTML de cobertura
-pytest tests/ --cov=src --cov-report=html
+# Opcao 1: Usar o script build.bat
+build.bat
 
-# Abrir relatório
-start htmlcov/index.html  # Windows
+# Opcao 2: Manualmente
+pip install -r requirements.txt
+pyinstaller dev-start.spec --clean
 ```
 
-**Cobertura atual: 96.54%** - Cobertura quase completa de todos os módulos
+O executavel sera criado em `dist/dev-start.exe`.
 
-Módulos com 100% de cobertura:
-- detector.py
-- env_manager.py
-- proxy_manager.py
-- repo_manager.py
-- gui.py (99.74%)
-- nodejs_installer.py
-- python_installer.py
+```bash
+# Uso do executavel
+dev-start.exe https://github.com/user/project
 
-## Licença
+# Com proxy
+dev-start.exe --http-proxy http://proxy:8080 --https-proxy http://proxy:8080 https://github.com/user/project
+```
 
-Ver arquivo LICENSE
+---
+
+## Documentacao
+
+| Documento | Descricao |
+|-----------|-----------|
+| [docs/USAGE.md](docs/USAGE.md) | Guia detalhado de uso (GUI + CLI) |
+| [docs/TESTING.md](docs/TESTING.md) | Documentacao de testes |
+| [CHANGELOG.md](CHANGELOG.md) | Historico de alteracoes |
+
+---
+
+## Licenca
+
+Este projeto esta licenciado sob a [GPL-3.0 License](LICENSE).
+
+---
+
+## Contribuindo
+
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
+3. Commit suas mudancas (`git commit -m 'feat: adiciona nova feature'`)
+4. Push para a branch (`git push origin feature/nova-feature`)
+5. Abra um Pull Request
+
+---
+
+## Suporte
+
+- Abra uma [issue](https://github.com/JohnPitter/dev-start/issues) para reportar bugs
+- Use [discussions](https://github.com/JohnPitter/dev-start/discussions) para perguntas
+
+---
+
+<div align="center">
+
+**[Voltar ao topo](#dev-start)**
+
+</div>
